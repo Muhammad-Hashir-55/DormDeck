@@ -6,13 +6,13 @@ import google.generativeai as genai
 from datetime import datetime as dt
 
 # --- CONFIGURATION ---
-# TODO: Brother, replace this with your actual API Key from Google AI Studio
 # Load environment variables from .env file
 load_dotenv()
 API_KEY = os.getenv("GEMINI_API_KEY_DORMDECK")
 
-if API_KEY == "YOUR_GEMINI_API_KEY":
-    print("⚠️ WARNING: You haven't set your Gemini API Key in dormdeck_engine.py yet!")
+if not API_KEY or API_KEY == "YOUR_GEMINI_API_KEY":
+    print("⚠️ WARNING: You haven't set your Gemini API Key in environment variables!")
+    print("Make sure your .env file contains: GEMINI_API_KEY_DORMDECK=your_actual_api_key_here")
 
 # Configure Gemini
 genai.configure(api_key=API_KEY)
@@ -75,7 +75,7 @@ def calculate_location_score(shop_loc, user_loc):
 # --- 4. SEMANTIC MATCHING WITH LLM ---
 def analyze_intent(user_query):
     """
-    Uses Gemini 1.5 Flash to extract structured intent from the user's messy text.
+    Uses Gemini 2.5 Flash to extract structured intent from the user's messy text.
     Returns a JSON object.
     """
     prompt = f"""
@@ -99,8 +99,12 @@ def analyze_intent(user_query):
         # Fallback if LLM fails
         return {"category": "General", "intent": "unknown", "urgency": 5, "keywords": user_query.split()}
 
-# --- 5. RANKING ENGINE ---
+# --- 5. SMART RANKING ENGINE ---
 def get_recommendations(user_query, user_location):
+    """
+    Main recommendation engine that uses semantic matching to find relevant services.
+    Only returns services that are semantically related to the query.
+    """
     services = load_services()
     
     print(f"🧠 Thinking... Analyzing query: '{user_query}' at '{user_location}'")
@@ -133,40 +137,128 @@ def get_recommendations(user_query, user_location):
         is_open = is_shop_open(service['open_time'], service['close_time'])
         status_score = 1.0 if is_open else 0.0
         
-        # --- FINAL FORMULA ---
-        # Score = (semantic * 50) + (location * 30) + (open * 20)
-        total_score = (semantic_score * 50) + (loc_score * 30) + (status_score * 20)
-        
-        ranked_results.append({
-            "service": service,
-            "score": total_score,
-            "is_open": is_open,
-            "reasons": {
-                "semantic": semantic_score,
-                "location": loc_score,
-                "open": is_open
-            }
-        })
+        # --- THE KEY FIX ---
+        # We enforce that semantic_score MUST be > 0.
+        # If the service has nothing to do with the query, we discard it,
+        # even if it is right next door.
+        if semantic_score > 0:
+            # --- FINAL FORMULA ---
+            # Score = (semantic * 50) + (location * 30) + (open * 20)
+            total_score = (semantic_score * 50) + (loc_score * 30) + (status_score * 20)
+            
+            # Only include if there is at least SOME relevance or location match
+            if total_score > 10:
+                ranked_results.append({
+                    "service": service,
+                    "score": total_score,
+                    "is_open": is_open,
+                    "match_type": "smart"
+                })
     
     # Sort by score descending
     ranked_results.sort(key=lambda x: x['score'], reverse=True)
     
-    return ranked_results[:3] # Return top 3
+    # Return top 3 smart recommendations if found
+    return ranked_results[:3]
 
-# --- MAIN BLOCK FOR TESTING DAY 1 ---
+# --- 6. FALLBACK ENGINE ---
+def get_fallback_suggestions(user_location):
+    """
+    Returns generic popular open places if the AI finds nothing specific.
+    This serves as a backup when no semantically relevant services are found.
+    """
+    services = load_services()
+    open_services = []
+    
+    for service in services:
+        is_open = is_shop_open(service['open_time'], service['close_time'])
+        
+        # Prioritize Open shops
+        if is_open:
+            # Boost score slightly if close to user
+            loc_score = calculate_location_score(service['location'], user_location)
+            score = 50 + (loc_score * 50) 
+            open_services.append({
+                "service": service,
+                "score": score,
+                "is_open": True,
+                "match_type": "fallback"
+            })
+    
+    # Sort by location relevance
+    open_services.sort(key=lambda x: x['score'], reverse=True)
+    
+    # Return top 3 open, or just top 3 random if everything is closed
+    if not open_services:
+        return [{"service": s, "score": 0, "is_open": False, "match_type": "fallback"} for s in services[:3]]
+        
+    return open_services[:3]
+
+# --- 7. MAIN API FUNCTION ---
+def get_all_recommendations(user_query, user_location):
+    """
+    Main function that combines smart recommendations with fallback.
+    Returns either smart matches or fallback suggestions.
+    """
+    # First try to get smart recommendations
+    smart_results = get_recommendations(user_query, user_location)
+    
+    if smart_results:
+        print(f"✅ Found {len(smart_results)} smart recommendations")
+        return {
+            "type": "smart",
+            "results": smart_results,
+            "message": "Here are the best matches for your request!"
+        }
+    else:
+        print(f"🤔 No smart matches found, showing fallback suggestions")
+        fallback_results = get_fallback_suggestions(user_location)
+        return {
+            "type": "fallback",
+            "results": fallback_results,
+            "message": "We couldn't find exactly what you're looking for. Here are some popular open spots nearby:"
+        }
+
+# --- MAIN BLOCK FOR TESTING ---
 if __name__ == "__main__":
-    # Simulate a user test
+    # Test Case 1: Specific query that should find matches
     test_query = "I really need some fries right now"
     test_location = "H-5"
     
-    print("--- DORMDECK BACKEND TEST ---")
-    results = get_recommendations(test_query, test_location)
+    print("=" * 50)
+    print("TEST CASE 1: Specific Food Query")
+    print("=" * 50)
+    result = get_all_recommendations(test_query, test_location)
+    
+    print(f"\n📊 Result Type: {result['type']}")
+    print(f"💬 Message: {result['message']}")
     
     print("\n--- TOP RECOMMENDATIONS ---")
-    for res in results:
+    for idx, res in enumerate(result['results'], 1):
         s = res['service']
         status = "🟢 OPEN" if res['is_open'] else "🔴 CLOSED"
-        print(f"[{res['score']} pts] {s['name']} ({status})")
+        print(f"\n{idx}. [{res['score']} pts] {s['name']} ({status})")
         print(f"   📍 {s['location']} | 📝 {s['description']}")
-        print(f"   💡 Match details: Loc: {res['reasons']['location']}, Sem: {res['reasons']['semantic']}")
-        print("-" * 30)
+        print(f"   ⏰ Hours: {s['open_time']} - {s['close_time']}")
+        print(f"   🎯 Match Type: {res['match_type']}")
+    
+    print("\n" + "=" * 50)
+    
+    # Test Case 2: Random query that might not find matches
+    test_query2 = "I want to learn quantum physics"
+    print(f"\nTEST CASE 2: Unusual Query - '{test_query2}'")
+    print("=" * 50)
+    
+    result2 = get_all_recommendations(test_query2, test_location)
+    
+    print(f"\n📊 Result Type: {result2['type']}")
+    print(f"💬 Message: {result2['message']}")
+    
+    print("\n--- FALLBACK SUGGESTIONS ---")
+    for idx, res in enumerate(result2['results'], 1):
+        s = res['service']
+        status = "🟢 OPEN" if res['is_open'] else "🔴 CLOSED"
+        print(f"\n{idx}. [{res['score']} pts] {s['name']} ({status})")
+        print(f"   📍 {s['location']} | 📝 {s['description']}")
+        print(f"   ⏰ Hours: {s['open_time']} - {s['close_time']}")
+        print(f"   🎯 Match Type: {res['match_type']}")
