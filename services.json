@@ -1,0 +1,57 @@
+[
+  {
+    "id": 1,
+    "name": "Hamza Snacks",
+    "category": "Food",
+    "location": "H-5",
+    "open_time": "18:00",
+    "close_time": "03:00",
+    "description": "The best fries and wings in H-5. Famous for Zinger burgers.",
+    "keywords": ["fries", "burger", "fast food", "dinner", "late night"],
+    "whatsapp": "923001234567"
+  },
+  {
+    "id": 2,
+    "name": "Ali Stationary",
+    "category": "Stationery",
+    "location": "H-12",
+    "open_time": "09:00",
+    "close_time": "21:00",
+    "description": "Printouts, photostat, pens, and notebooks.",
+    "keywords": ["print", "paper", "pen", "assignment", "stapler"],
+    "whatsapp": "923111234567"
+  },
+  {
+    "id": 3,
+    "name": "Midnight Maggi Point",
+    "category": "Food",
+    "location": "H-8",
+    "open_time": "22:00",
+    "close_time": "05:00",
+    "description": "Hot maggi and tea for exam nights.",
+    "keywords": ["maggi", "tea", "coffee", "soup", "snacks"],
+    "whatsapp": "923221234567"
+  },
+  {
+    "id": 4,
+    "name": "Tech Fixers",
+    "category": "Services",
+    "location": "H-3",
+    "open_time": "12:00",
+    "close_time": "20:00",
+    "description": "Laptop repair, mobile charging cables, and software install.",
+    "keywords": ["laptop", "repair", "mobile", "charger", "windows"],
+    "whatsapp": "923331234567"
+  },
+  {
+    "id": 5,
+    "name": "Juice Master",
+    "category": "Food",
+    "location": "H-5",
+    "open_time": "10:00",
+    "close_time": "22:00",
+    "description": "Fresh seasonal juices and shakes.",
+    "keywords": ["juice", "shake", "mango", "banana", "drink"],
+    "whatsapp": "923441234567"
+  }
+]
