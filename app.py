@@ -1,7 +1,6 @@
 import streamlit as st
 import time
 import dormdeck_engine
-import random
 
 # --- 1. PAGE CONFIG & STYLING ---
 st.set_page_config(
@@ -111,15 +110,45 @@ if "messages" not in st.session_state:
         {"role": "assistant", "content": f"🎓 **Welcome to DormDeck AI!**\n\nI'm your campus concierge. I can find food, stationary, services, medicine, or transport near **{user_location}**.\n\nTry asking for:\n• *'I need spicy wings right now'*\n• *'Printing near H-5'*\n• *'Emergency medicine delivery'*"}
     ]
 
-# --- 4. RENDER CHAT HISTORY ---
+# --- 4. QUICK ACTION BUTTONS (PLACED HERE BEFORE CHAT DISPLAY) ---
 st.title("🎓 DormDeck AI - Campus Concierge")
 
+# Quick Actions Section
+st.markdown("### ⚡ Quick Actions")
+
+# Define quick actions
+quick_actions = [
+    {"label": "🍔 Food", "query": "I need food delivery options", "key": "quick_food"},
+    {"label": "📚 Printing", "query": "Where can I print documents?", "key": "quick_print"},
+    {"label": "💊 Medicine", "query": "Need emergency medicine delivery", "key": "quick_med"},
+    {"label": "🚗 Transport", "query": "Need transport service", "key": "quick_transport"},
+    {"label": "🛠️ Services", "query": "What services are available?", "key": "quick_services"}
+]
+
+# Create buttons in a grid
+quick_cols = st.columns(5)
+for idx, action in enumerate(quick_actions):
+    with quick_cols[idx]:
+        if st.button(action["label"], key=action["key"], use_container_width=True):
+            # Add user message to chat history
+            st.session_state.messages.append({"role": "user", "content": action["query"]})
+            st.rerun()
+
+st.markdown("---")
+
+# --- 5. RENDER CHAT HISTORY ---
 # Display chat messages
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
 
-# --- 5. MAIN INTERACTION ENGINE ---
+# --- 6. CHECK FOR QUICK ACTION TRIGGER (BEFORE CHAT INPUT) ---
+# Check if a quick action was just triggered (after rerun)
+# This handles the case when quick action button is clicked
+if "quick_action_triggered" not in st.session_state:
+    st.session_state.quick_action_triggered = False
+
+# --- 7. MAIN CHAT INPUT ---
 if prompt := st.chat_input("Tell me what you need... (Ex: I need fries, medicine delivery, printing)"):
     
     # A. User Message
@@ -208,43 +237,7 @@ if prompt := st.chat_input("Tell me what you need... (Ex: I need fries, medicine
                                 st.caption(f"⭐ Rating: {service['rating']}/5")
             else:
                 st.warning("No services found at the moment. Try checking back during business hours or expand your search.")
-                
-                # Suggestions
-                st.markdown("💡 **Try searching for:**")
-                suggestions = ["Food delivery", "Printing services", "Late night snacks", "Emergency medicine", "Transport"]
-                cols = st.columns(len(suggestions))
-                for idx, sug in enumerate(suggestions):
-                    with cols[idx]:
-                        if st.button(sug, key=f"sug_{idx}"):
-                            st.session_state.messages.append({"role": "user", "content": sug})
-                            st.rerun()
 
-# --- 6. QUICK ACTION BUTTONS ---
-st.markdown("---")
-st.markdown("### ⚡ Quick Actions")
-
-quick_cols = st.columns(5)
-with quick_cols[0]:
-    if st.button("🍔 Food", use_container_width=True):
-        st.session_state.messages.append({"role": "user", "content": "I need food delivery options"})
-        st.rerun()
-with quick_cols[1]:
-    if st.button("📚 Printing", use_container_width=True):
-        st.session_state.messages.append({"role": "user", "content": "Where can I print documents?"})
-        st.rerun()
-with quick_cols[2]:
-    if st.button("💊 Medicine", use_container_width=True):
-        st.session_state.messages.append({"role": "user", "content": "Need emergency medicine delivery"})
-        st.rerun()
-with quick_cols[3]:
-    if st.button("🚗 Transport", use_container_width=True):
-        st.session_state.messages.append({"role": "user", "content": "Need transport service"})
-        st.rerun()
-with quick_cols[4]:
-    if st.button("🛠️ Services", use_container_width=True):
-        st.session_state.messages.append({"role": "user", "content": "What services are available?"})
-        st.rerun()
-
-# --- 7. FOOTER ---
+# --- 8. FOOTER ---
 st.markdown("---")
 st.caption("🎓 DormDeck AI v2.0 | Smart Campus Concierge | Using Gemini 2.5 Flash AI")
