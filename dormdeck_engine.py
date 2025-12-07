@@ -205,14 +205,50 @@ def get_all_recommendations(user_query, user_location):
 def add_service_entry(entry):
     """
     entry: dict with keys id (optional), name, category, location, open_time, close_time, description, keywords(list), whatsapp, form_url(optional)
+
+    Duplicate detection logic:
+    - If an existing service has the same whatsapp number (exact match) -> considered duplicate.
+    - Or if existing service has same name AND same location (case-insensitive) -> considered duplicate.
     """
     services = safe_load_services()
+
+    # Normalize incoming values for comparison
+    incoming_name = (entry.get("name") or "").strip().lower()
+    incoming_location = (entry.get("location") or "").strip().lower()
+    incoming_whatsapp = (entry.get("whatsapp") or "").strip()
+
+    # Check duplicates
+    for s in services:
+        s_name = (s.get("name") or "").strip().lower()
+        s_loc = (s.get("location") or "").strip().lower()
+        s_wa = (s.get("whatsapp") or "").strip()
+
+        # Duplicate by whatsapp (strong signal)
+        if incoming_whatsapp and s_wa and incoming_whatsapp == s_wa:
+            raise ValueError(f"Duplicate service detected: same WhatsApp number already exists (id={s.get('id')}).")
+
+        # Duplicate by name + location
+        if incoming_name and incoming_location and s_name == incoming_name and s_loc == incoming_location:
+            raise ValueError(f"Duplicate service detected: a service with the same name already exists at this location (id={s.get('id')}).")
+
     # assign id
-    max_id = max([s.get("id", 0) for s in services], default=0)
+    max_id = max([int(s.get("id", 0)) for s in services], default=0)
     entry["id"] = max_id + 1
+
+    # Normalize keywords: ensure list of trimmed strings
+    kws = entry.get("keywords", [])
+    if isinstance(kws, str):
+        kws = [k.strip() for k in kws.split(",") if k.strip()]
+    elif isinstance(kws, list):
+        kws = [str(k).strip() for k in kws if str(k).strip()]
+    else:
+        kws = []
+    entry["keywords"] = kws
+
     services.append(entry)
     safe_write_services(services)
     return entry
+
 
 
 

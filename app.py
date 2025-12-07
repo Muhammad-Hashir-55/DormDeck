@@ -99,8 +99,12 @@ with st.sidebar:
                     try:
                         added = dormdeck_engine.add_service_entry(entry)
                         st.success(f"Service added ✅ (id: {added['id']}). It will appear in search immediately.")
+                    except ValueError as dup_err:
+                        # Friendly warning when duplicate detected
+                        st.warning(str(dup_err))
                     except Exception as ex:
                         st.error(f"Failed to add service: {ex}")
+
 
     st.markdown("---")
 
