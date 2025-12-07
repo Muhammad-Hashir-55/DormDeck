@@ -2,5 +2,3 @@ streamlit
 google-generativeai
 python-dotenv
 pytest
-sys
-os
