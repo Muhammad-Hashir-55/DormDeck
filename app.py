@@ -110,13 +110,15 @@ if "messages" not in st.session_state:
         {"role": "assistant", "content": f"🎓 **Welcome to DormDeck AI!**\n\nI'm your campus concierge. I can find food, stationary, services, medicine, or transport near **{user_location}**.\n\nTry asking for:\n• *'I need spicy wings right now'*\n• *'Printing near H-5'*\n• *'Emergency medicine delivery'*"}
     ]
 
-# --- 4. QUICK ACTION BUTTONS (PLACED HERE BEFORE CHAT DISPLAY) ---
+# Create state for pending quick action
+if "pending_quick_query" not in st.session_state:
+    st.session_state.pending_quick_query = None
+
+# --- 4. QUICK ACTION BUTTONS ---
 st.title("🎓 DormDeck AI - Campus Concierge")
 
-# Quick Actions Section
 st.markdown("### ⚡ Quick Actions")
 
-# Define quick actions
 quick_actions = [
     {"label": "🍔 Food", "query": "I need food delivery options", "key": "quick_food"},
     {"label": "📚 Printing", "query": "Where can I print documents?", "key": "quick_print"},
@@ -125,79 +127,60 @@ quick_actions = [
     {"label": "🛠️ Services", "query": "What services are available?", "key": "quick_services"}
 ]
 
-# Create buttons in a grid
 quick_cols = st.columns(5)
 for idx, action in enumerate(quick_actions):
     with quick_cols[idx]:
         if st.button(action["label"], key=action["key"], use_container_width=True):
-            # Add user message to chat history
-            st.session_state.messages.append({"role": "user", "content": action["query"]})
+            st.session_state.pending_quick_query = action["query"]
             st.rerun()
 
 st.markdown("---")
 
 # --- 5. RENDER CHAT HISTORY ---
-# Display chat messages
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
 
-# --- 6. CHECK FOR QUICK ACTION TRIGGER (BEFORE CHAT INPUT) ---
-# Check if a quick action was just triggered (after rerun)
-# This handles the case when quick action button is clicked
-if "quick_action_triggered" not in st.session_state:
-    st.session_state.quick_action_triggered = False
+# --- 6. PROCESS QUICK ACTION ---
+if st.session_state.pending_quick_query:
+    q = st.session_state.pending_quick_query
+    st.session_state.pending_quick_query = None  # reset
 
-# --- 7. MAIN CHAT INPUT ---
-if prompt := st.chat_input("Tell me what you need... (Ex: I need fries, medicine delivery, printing)"):
-    
-    # A. User Message
-    st.session_state.messages.append({"role": "user", "content": prompt})
-    with st.chat_message("user"):
-        st.markdown(f"**You:** {prompt}")
+    # Add user message
+    st.session_state.messages.append({"role": "user", "content": q})
 
-    # B. AI Processing
     with st.chat_message("assistant"):
-        message_placeholder = st.empty()
-        
-        # Loading Animation
         with st.spinner("🧠 Scanning campus services..."):
-            time.sleep(0.7) # UX delay for realistic feel
-            
-            # Get recommendations using the main function
-            result_data = dormdeck_engine.get_all_recommendations(prompt, user_location)
-            
-            # Extract data
+            time.sleep(0.7)
+
+            result_data = dormdeck_engine.get_all_recommendations(q, user_location)
             results = result_data["results"]
             result_type = result_data["type"]
             message = result_data["message"]
-            
-            # 3. Construct Response
+
             if result_type == "smart":
                 if results:
                     top_name = results[0]['service']['name']
                     intro = f"✅ {message}\n\n**Best match:** {top_name}"
                 else:
                     intro = "🤔 I couldn't find exact matches, but here are nearby options:"
-            else:  # fallback
+            else:
                 intro = f"💡 {message}"
-            
+
             st.markdown(intro)
             st.session_state.messages.append({"role": "assistant", "content": intro})
-            
-            # 4. Render UI Cards
+
+            # Render recommendation cards
             if results:
                 for idx, item in enumerate(results, 1):
                     service = item['service']
                     score = int(item['score'])
                     is_open = item['is_open']
                     match_type = item['match_type']
-                    
-                    # Dynamic Badge HTML
+
                     badge_class = "status-open" if is_open else "status-closed"
                     badge_text = "🟢 OPEN NOW" if is_open else "🔴 CLOSED"
-                    
-                    # Determine emoji based on category
+
                     category_emoji = {
                         "Food": "🍔",
                         "Stationery": "📚",
@@ -205,38 +188,85 @@ if prompt := st.chat_input("Tell me what you need... (Ex: I need fries, medicine
                         "Medicine": "💊",
                         "Transport": "🚗"
                     }.get(service['category'], "📍")
-                    
-                    # Card Container
+
                     with st.container(border=True):
                         col1, col2 = st.columns([0.7, 0.3])
-                        
+
                         with col1:
                             st.markdown(f"### {idx}. {service['name']} {category_emoji}")
                             st.markdown(f"<span class='{badge_class}'>{badge_text}</span>", unsafe_allow_html=True)
                             st.caption(f"📍 **Location:** {service['location']} • **Category:** {service['category']}")
                             st.write(f"📝 **Description:** {service['description']}")
                             st.caption(f"⏰ **Hours:** {service['open_time']} - {service['close_time']}")
-                            
-                            # Progress bar for match score
                             st.progress(score / 100, text=f"Match Score: {score}%")
-                            
-                            # Debug info if enabled
-                            if st.session_state.get('debug_mode'):
-                                st.info(f"🔍 **Debug Info:** Match Type: `{match_type}` | Raw Score: {score}")
 
                         with col2:
-                            st.write("") # Spacer
-                            st.write("") # Spacer
-                            # WhatsApp Button with better formatting
+                            wa_msg = f"Hi {service['name']}! 👋 I found you on DormDeck. I'm in {user_location}. I need: {q}"
+                            wa_link = f"https://wa.me/{service['whatsapp']}?text={wa_msg}"
+                            st.link_button("💬 Chat on WhatsApp", wa_link, use_container_width=True)
+
+            st.rerun()
+
+# --- 7. MAIN CHAT INPUT ---
+if prompt := st.chat_input("Tell me what you need... (Ex: I need fries, medicine delivery, printing)"):
+
+    st.session_state.messages.append({"role": "user", "content": prompt})
+
+    with st.chat_message("assistant"):
+        with st.spinner("🧠 Scanning campus services..."):
+            time.sleep(0.7)
+
+            result_data = dormdeck_engine.get_all_recommendations(prompt, user_location)
+            results = result_data["results"]
+            result_type = result_data["type"]
+            message = result_data["message"]
+
+            if result_type == "smart":
+                if results:
+                    top_name = results[0]['service']['name']
+                    intro = f"✅ {message}\n\n**Best match:** {top_name}"
+                else:
+                    intro = "🤔 I couldn't find exact matches, but here are nearby options:"
+            else:
+                intro = f"💡 {message}"
+
+            st.markdown(intro)
+            st.session_state.messages.append({"role": "assistant", "content": intro})
+
+            # Render cards for chat_input queries
+            if results:
+                for idx, item in enumerate(results, 1):
+                    service = item['service']
+                    score = int(item['score'])
+                    is_open = item['is_open']
+                    match_type = item['match_type']
+
+                    badge_class = "status-open" if is_open else "status-closed"
+                    badge_text = "🟢 OPEN NOW" if is_open else "🔴 CLOSED"
+
+                    category_emoji = {
+                        "Food": "🍔",
+                        "Stationery": "📚",
+                        "Services": "🛠️",
+                        "Medicine": "💊",
+                        "Transport": "🚗"
+                    }.get(service['category'], "📍")
+
+                    with st.container(border=True):
+                        col1, col2 = st.columns([0.7, 0.3])
+
+                        with col1:
+                            st.markdown(f"### {idx}. {service['name']} {category_emoji}")
+                            st.markdown(f"<span class='{badge_class}'>{badge_text}</span>", unsafe_allow_html=True)
+                            st.caption(f"📍 **Location:** {service['location']} • **Category:** {service['category']}")
+                            st.write(f"📝 **Description:** {service['description']}")
+                            st.caption(f"⏰ **Hours:** {service['open_time']} - {service['close_time']}")
+                            st.progress(score / 100, text=f"Match Score: {score}%")
+
+                        with col2:
                             wa_msg = f"Hi {service['name']}! 👋 I found you on DormDeck. I'm in {user_location}. I need: {prompt}"
                             wa_link = f"https://wa.me/{service['whatsapp']}?text={wa_msg}"
                             st.link_button("💬 Chat on WhatsApp", wa_link, use_container_width=True)
-                            
-                            # Optional: Display rating if available
-                            if 'rating' in service:
-                                st.caption(f"⭐ Rating: {service['rating']}/5")
-            else:
-                st.warning("No services found at the moment. Try checking back during business hours or expand your search.")
 
 # --- 8. FOOTER ---
 st.markdown("---")
