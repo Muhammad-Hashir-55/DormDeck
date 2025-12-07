@@ -1,0 +1,6 @@
+streamlit>=1.24
+google-generativeai>=0.9.0
+python-dotenv
+pytest
+sys
+os
