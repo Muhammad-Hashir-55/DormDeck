@@ -213,3 +213,46 @@ def add_service_entry(entry):
     services.append(entry)
     safe_write_services(services)
     return entry
+
+
+
+# dormdeck_engine.py (append these helpers)
+
+def get_all_services():
+    """Return all services (list) from services.json"""
+    return safe_load_services()
+
+def update_service(service_id, updated_fields):
+    """
+    Update service with given id using keys in updated_fields dict.
+    Returns the updated service dict, or raises ValueError if id not found.
+    """
+    services = safe_load_services()
+    found = False
+    for idx, s in enumerate(services):
+        if int(s.get("id", -1)) == int(service_id):
+            found = True
+            # update fields (only provided keys)
+            for k, v in updated_fields.items():
+                if k == "keywords" and isinstance(v, str):
+                    # accept comma-separated string
+                    services[idx][k] = [x.strip() for x in v.split(",") if x.strip()]
+                else:
+                    services[idx][k] = v
+            updated = services[idx]
+            break
+    if not found:
+        raise ValueError(f"Service with id={service_id} not found.")
+    safe_write_services(services)
+    return updated
+
+def delete_service(service_id):
+    """
+    Remove service with given id. Returns True if removed, False if not found.
+    """
+    services = safe_load_services()
+    new_services = [s for s in services if int(s.get("id", -1)) != int(service_id)]
+    if len(new_services) == len(services):
+        return False
+    safe_write_services(new_services)
+    return True

@@ -1,6 +1,14 @@
+# app.py (full file) - Admin Panel with modern st.query_params usage
 import streamlit as st
 import time
 import dormdeck_engine
+from dotenv import load_dotenv
+import os
+
+# load env (for admin credentials)
+load_dotenv()
+ADMIN_USER = os.getenv("ADMIN_USER_DORMDECK")
+ADMIN_PASS = os.getenv("ADMIN_PASS_DORMDECK")  # change in .env or Streamlit secrets
 
 # --- 1. PAGE CONFIG & STYLING ---
 st.set_page_config(
@@ -13,61 +21,26 @@ st.set_page_config(
 # Custom CSS for premium look
 st.markdown("""
 <style>
-    
     .block-container {padding-top: 2rem;}
-
-    .stChatMessage {
-        border-radius: 15px;
-        padding: 10px;
-        margin-bottom: 10px;
-    }
-
-    .stButton button {
-        background-color: #25D366 !important;
-        color: white !important;
-        border: none !important;
-        border-radius: 8px !important;
-        font-weight: bold !important;
-    }
-    .stButton button:hover {
-        background-color: #128C7E !important;
-    }
-
-    .status-open {
-        color: #25D366;
-        font-weight: bold;
-        border: 1px solid #25D366;
-        padding: 2px 8px;
-        border-radius: 12px;
-        font-size: 0.8rem;
-        display: inline-block;
-        margin-bottom: 5px;
-    }
-    .status-closed {
-        color: #FF4B4B;
-        font-weight: bold;
-        border: 1px solid #FF4B4B;
-        padding: 2px 8px;
-        border-radius: 12px;
-        font-size: 0.8rem;
-        display: inline-block;
-        margin-bottom: 5px;
-    }
-
-    .stProgress > div > div > div {
-        background-color: #25D366;
-    }
-
+    .stChatMessage {border-radius: 15px; padding: 10px; margin-bottom: 10px;}
+    .stButton button {background-color: #25D366 !important; color: white !important; border: none !important; border-radius: 8px !important; font-weight: bold !important;}
+    .stButton button:hover {background-color: #128C7E !important;}
+    .status-open { color: #25D366; font-weight: bold; border: 1px solid #25D366; padding: 2px 8px; border-radius: 12px; font-size: 0.8rem; display: inline-block; margin-bottom: 5px; }
+    .status-closed { color: #FF4B4B; font-weight: bold; border: 1px solid #FF4B4B; padding: 2px 8px; border-radius: 12px; font-size: 0.8rem; display: inline-block; margin-bottom: 5px; }
+    .stProgress > div > div > div { background-color: #25D366; }
     .stChatInput {border-radius: 20px !important;}
 </style>
 """, unsafe_allow_html=True)
 
-# --- 2. SIDEBAR ---
+# --- Helper: get current page param (modern API) ---
+params = st.query_params
+page = params.get("page", ["main"])[0]
+
+# --- Sidebar ---
 with st.sidebar:
     st.image("https://cdn-icons-png.flaticon.com/512/4712/4712009.png", width=80)
     st.title("DormDeck")
     st.caption("Campus Concierge v2.0")
-
     st.markdown("---")
 
     st.subheader("📍 Your Context")
@@ -76,19 +49,18 @@ with st.sidebar:
         ["H-1", "H-2", "H-3", "H-4", "H-5", "H-6", "H-7", "H-8", "H-12", "Library", "Cafeteria"],
         index=4
     )
-
     st.info(f"Finding services best for **{user_location}**")
-
     st.markdown("---")
 
+    # Debug toggle
     if st.checkbox("Show Debug Information"):
         st.session_state['debug_mode'] = True
         st.success("Debug mode enabled - showing match scores and logic")
     else:
-        st.session_state['debug_mode'] = False
+        st.session_state['debug_mode'] = st.session_state.get('debug_mode', False)
 
-    # --- SELLER ONBOARDING FORM (Sidebar) ---
     st.markdown("---")
+    # SELLER ONBOARDING FORM (Quick)
     st.subheader("🧾 Seller Onboarding (Quick)")
     with st.expander("Add / Update your service (no login required)"):
         with st.form("seller_form"):
@@ -104,13 +76,11 @@ with st.sidebar:
 
             submitted = st.form_submit_button("➕ Add Service")
             if submitted:
-                # simple validations
                 errors = []
                 if not s_name.strip():
                     errors.append("Name required.")
                 if not s_whatsapp.strip() or not s_whatsapp.strip().isdigit():
                     errors.append("WhatsApp must be digits only (include country code).")
-                # Prevent obviously bad entries
                 if errors:
                     for e in errors:
                         st.error(e)
@@ -132,9 +102,36 @@ with st.sidebar:
                     except Exception as ex:
                         st.error(f"Failed to add service: {ex}")
 
-
     st.markdown("---")
 
+    # ADMIN LOGIN area
+    st.subheader("🔒 Admin Panel")
+    if st.session_state.get("is_admin"):
+        st.info("You are logged in as admin.")
+        if st.button("Open Admin Panel"):
+            # open admin page using modern API
+            st.query_params = {"page": ["admin"]}
+            st.rerun()
+        if st.button("Logout Admin"):
+            st.session_state["is_admin"] = False
+            # return to main page
+            st.query_params = {"page": ["main"]}
+            st.rerun()
+    else:
+        with st.form("admin_login_form"):
+            a_user = st.text_input("Admin User")
+            a_pass = st.text_input("Admin Password", type="password")
+            login = st.form_submit_button("Login")
+            if login:
+                if str(a_user).strip() == str(ADMIN_USER) and str(a_pass).strip() == str(ADMIN_PASS):
+                    st.success("Admin login successful.")
+                    st.session_state["is_admin"] = True
+                    st.query_params = {"page": ["admin"]}
+                    st.rerun()
+                else:
+                    st.error("Invalid credentials.")
+
+    st.markdown("---")
     if st.button("🗑️ Clear Chat History"):
         st.session_state.messages = [
             {"role": "assistant", "content": f"Chat cleared! I'm ready to help. What do you need near **{user_location}**?"}
@@ -150,9 +147,115 @@ if "messages" not in st.session_state:
 if "pending_quick_query" not in st.session_state:
     st.session_state.pending_quick_query = None
 
-# --- 4. QUICK ACTION BUTTONS ---
-st.title("🎓 DormDeck AI - Campus Concierge")
+# --- ADMIN PAGE ---
+if page == "admin" and st.session_state.get("is_admin"):
+    st.title("🔧 Admin Panel — DormDeck Services")
+    st.markdown("Manage `services.json` entries: view, edit, add, delete.")
+    services = dormdeck_engine.get_all_services()
 
+    # show dataset
+    if services:
+        st.dataframe(services)
+    else:
+        st.info("No services found.")
+
+    st.markdown("---")
+    st.subheader("Edit / Delete Service")
+    ids = [s.get("id") for s in services if s.get("id") is not None]
+    if ids:
+        sel_id = st.selectbox("Select service id to edit", ids)
+        sel_service = next((s for s in services if s.get("id") == sel_id), None)
+        if sel_service:
+            with st.form("edit_service_form"):
+                e_name = st.text_input("Name", sel_service.get("name", ""))
+                e_category = st.selectbox("Category", ["Food", "Stationery", "Services", "Medicine", "Transport", "General"], index=["Food","Stationery","Services","Medicine","Transport","General"].index(sel_service.get("category","Food")) if sel_service.get("category") else 0)
+                e_location = st.text_input("Location", sel_service.get("location",""))
+                e_open = st.text_input("Open Time", sel_service.get("open_time",""))
+                e_close = st.text_input("Close Time", sel_service.get("close_time",""))
+                e_whatsapp = st.text_input("WhatsApp", sel_service.get("whatsapp",""))
+                e_description = st.text_area("Description", sel_service.get("description",""))
+                e_keywords = st.text_input("Keywords (comma separated)", ", ".join(sel_service.get("keywords", [])))
+                e_form = st.text_input("Form URL", sel_service.get("form_url",""))
+                update_btn = st.form_submit_button("Update Service")
+                delete_btn = st.form_submit_button("Delete Service")
+
+                if update_btn:
+                    try:
+                        updated = {
+                            "name": e_name.strip(),
+                            "category": e_category,
+                            "location": e_location.strip(),
+                            "open_time": e_open.strip(),
+                            "close_time": e_close.strip(),
+                            "description": e_description.strip(),
+                            "keywords": e_keywords.strip(),
+                            "whatsapp": e_whatsapp.strip(),
+                            "form_url": e_form.strip() or None
+                        }
+                        dormdeck_engine.update_service(sel_id, updated)
+                        st.success("Service updated.")
+                        st.query_params = {"page": ["admin"]}  # keep admin page visible
+                        st.rerun()
+                    except Exception as ex:
+                        st.error(f"Update failed: {ex}")
+
+                if delete_btn:
+                    try:
+                        ok = dormdeck_engine.delete_service(sel_id)
+                        if ok:
+                            st.success("Service deleted.")
+                            st.query_params = {"page": ["admin"]}
+                            st.rerun()
+                        else:
+                            st.error("Delete failed (id not found).")
+                    except Exception as ex:
+                        st.error(f"Delete failed: {ex}")
+    else:
+        st.info("No editable services (missing id fields).")
+
+    st.markdown("---")
+    st.subheader("Add New Service (Admin)")
+    with st.form("admin_add_form"):
+        a_name = st.text_input("Seller / Shop Name", "")
+        a_category = st.selectbox("Category", ["Food", "Stationery", "Services", "Medicine", "Transport", "General"], index=0)
+        a_location = st.text_input("Location", "H-5")
+        a_open = st.text_input("Open Time", "09:00")
+        a_close = st.text_input("Close Time", "21:00")
+        a_whatsapp = st.text_input("WhatsApp", "")
+        a_desc = st.text_area("Short Description", "")
+        a_keywords = st.text_input("Keywords (comma separated)", "")
+        a_form = st.text_input("Optional Google Form URL", "")
+
+        add_ok = st.form_submit_button("Add Service (Admin)")
+        if add_ok:
+            try:
+                entry = {
+                    "name": a_name.strip(),
+                    "category": a_category,
+                    "location": a_location.strip(),
+                    "open_time": a_open.strip(),
+                    "close_time": a_close.strip(),
+                    "description": a_desc.strip(),
+                    "keywords": [k.strip() for k in a_keywords.split(",") if k.strip()],
+                    "whatsapp": a_whatsapp.strip(),
+                    "form_url": a_form.strip() or None
+                }
+                added = dormdeck_engine.add_service_entry(entry)
+                st.success(f"Added (id: {added['id']}).")
+                st.query_params = {"page": ["admin"]}
+                st.rerun()
+            except Exception as ex:
+                st.error(f"Add failed: {ex}")
+
+    # admin footer / back button
+    if st.button("← Back to main app"):
+        st.query_params = {"page": ["main"]}
+        st.rerun()
+
+    st.stop()  # stop further rendering of main app when on admin page
+
+# --- MAIN APP UI (default) ---
+st.title("🎓 DormDeck AI - Campus Concierge")
 st.markdown("### ⚡ Quick Actions")
 
 quick_actions = [
@@ -172,27 +275,23 @@ for idx, action in enumerate(quick_actions):
 
 st.markdown("---")
 
-# --- 5. RENDER CHAT HISTORY ---
+# Render chat history
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
 
-# --- 6. PROCESS QUICK ACTION ---
+# Process quick action
 if st.session_state.pending_quick_query:
     q = st.session_state.pending_quick_query
     st.session_state.pending_quick_query = None
-
     st.session_state.messages.append({"role": "user", "content": q})
-
     with st.chat_message("assistant"):
         with st.spinner("🧠 Scanning campus services..."):
             time.sleep(0.7)
-
             result_data = dormdeck_engine.get_all_recommendations(q, user_location)
             results = result_data["results"]
             message = result_data["message"]
             result_type = result_data["type"]
-
             if result_type == "smart":
                 if results:
                     intro = f"✅ {message}\n\n**Best match:** {results[0]['service']['name']}"
@@ -200,63 +299,49 @@ if st.session_state.pending_quick_query:
                     intro = "🤔 No perfect matches. Here are nearby options:"
             else:
                 intro = f"💡 {message}"
-
             st.markdown(intro)
             st.session_state.messages.append({"role": "assistant", "content": intro})
-
             if results:
                 for idx, item in enumerate(results, 1):
                     service = item['service']
                     score = int(item['score'])
                     is_open = item['is_open']
-
                     badge_class = "status-open" if is_open else "status-closed"
                     badge_text = "🟢 OPEN NOW" if is_open else "🔴 CLOSED"
-
                     emoji = {
                         "Food": "🍔",
                         "Stationery": "📚",
                         "Services": "🛠️",
                         "Medicine": "💊",
                         "Transport": "🚗"
-                    }.get(service['category'], "📍")
-
-                    with st.container(border=True):
+                    }.get(service.get('category'), "📍")
+                    with st.container():
                         col1, col2 = st.columns([0.7, 0.3])
-
                         with col1:
-                            st.markdown(f"### {idx}. {service['name']} {emoji}")
+                            st.markdown(f"### {idx}. {service.get('name')} {emoji}")
                             st.markdown(f"<span class='{badge_class}'>{badge_text}</span>", unsafe_allow_html=True)
-                            st.caption(f"📍 **Location:** {service['location']} • **Category:** {service['category']}")
-                            st.write(f"📝 **Description:** {service['description']}")
-                            st.caption(f"⏰ **Hours:** {service['open_time']} - {service['close_time']}")
+                            st.caption(f"📍 **Location:** {service.get('location')} • **Category:** {service.get('category')}")
+                            st.write(f"📝 **Description:** {service.get('description')}")
+                            st.caption(f"⏰ **Hours:** {service.get('open_time')} - {service.get('close_time')}")
                             st.progress(score / 100, text=f"Match Score: {score}%")
-
                         with col2:
-                            wa_msg = f"Hi {service['name']}! 👋 I found you on DormDeck. I'm in {user_location}. I need: {q}"
-                            wa_link = f"https://wa.me/{service['whatsapp']}?text={wa_msg}"
+                            wa_msg = f"Hi {service.get('name')}! 👋 I found you on DormDeck. I'm in {user_location}. I need: {q}"
+                            wa_link = f"https://wa.me/{service.get('whatsapp')}?text={wa_msg}"
                             st.link_button("💬 Chat on WhatsApp", wa_link, use_container_width=True)
-
-                            # --- GOOGLE FORM BUTTON ADDED ---
                             if service.get("form_url"):
-                                st.link_button("📝 Fill Google Form", service["form_url"], use_container_width=True)
-
+                                st.link_button("📝 Fill Google Form", service.get("form_url"), use_container_width=True)
             st.rerun()
 
-# --- 7. MAIN CHAT INPUT ---
+# Main chat input
 if prompt := st.chat_input("Tell me what you need... (Ex: I need fries, medicine delivery, printing)"):
-
     st.session_state.messages.append({"role": "user", "content": prompt})
-
     with st.chat_message("assistant"):
         with st.spinner("🧠 Scanning campus services..."):
             time.sleep(0.7)
-
             result_data = dormdeck_engine.get_all_recommendations(prompt, user_location)
             results = result_data["results"]
             message = result_data["message"]
             result_type = result_data["type"]
-
             if result_type == "smart":
                 if results:
                     intro = f"✅ {message}\n\n**Best match:** {results[0]['service']['name']}"
@@ -264,47 +349,38 @@ if prompt := st.chat_input("Tell me what you need... (Ex: I need fries, medicine
                     intro = "🤔 No perfect matches. Here are nearby options:"
             else:
                 intro = f"💡 {message}"
-
             st.markdown(intro)
             st.session_state.messages.append({"role": "assistant", "content": intro})
-
             if results:
                 for idx, item in enumerate(results, 1):
                     service = item['service']
                     score = int(item['score'])
                     is_open = item['is_open']
-
                     badge_class = "status-open" if is_open else "status-closed"
                     badge_text = "🟢 OPEN NOW" if is_open else "🔴 CLOSED"
-
                     emoji = {
                         "Food": "🍔",
                         "Stationery": "📚",
                         "Services": "🛠️",
                         "Medicine": "💊",
                         "Transport": "🚗"
-                    }.get(service['category'], "📍")
-
-                    with st.container(border=True):
+                    }.get(service.get('category'), "📍")
+                    with st.container():
                         col1, col2 = st.columns([0.7, 0.3])
-
                         with col1:
-                            st.markdown(f"### {idx}. {service['name']} {emoji}")
+                            st.markdown(f"### {idx}. {service.get('name')} {emoji}")
                             st.markdown(f"<span class='{badge_class}'>{badge_text}</span>", unsafe_allow_html=True)
-                            st.caption(f"📍 **Location:** {service['location']} • **Category:** {service['category']}")
-                            st.write(f"📝 **Description:** {service['description']}")
-                            st.caption(f"⏰ **Hours:** {service['open_time']} - {service['close_time']}")
+                            st.caption(f"📍 **Location:** {service.get('location')} • **Category:** {service.get('category')}")
+                            st.write(f"📝 **Description:** {service.get('description')}")
+                            st.caption(f"⏰ **Hours:** {service.get('open_time')} - {service.get('close_time')}")
                             st.progress(score / 100, text=f"Match Score: {score}%")
-
                         with col2:
-                            wa_msg = f"Hi {service['name']}! 👋 I found you on DormDeck. I'm in {user_location}. I need: {prompt}"
-                            wa_link = f"https://wa.me/{service['whatsapp']}?text={wa_msg}"
+                            wa_msg = f"Hi {service.get('name')}! 👋 I found you on DormDeck. I'm in {user_location}. I need: {prompt}"
+                            wa_link = f"https://wa.me/{service.get('whatsapp')}?text={wa_msg}"
                             st.link_button("💬 Chat on WhatsApp", wa_link, use_container_width=True)
-
-                            # --- GOOGLE FORM BUTTON ADDED ---
                             if service.get("form_url"):
-                                st.link_button("📝 Fill Google Form", service["form_url"], use_container_width=True)
+                                st.link_button("📝 Fill Google Form", service.get("form_url"), use_container_width=True)
 
-# --- 8. FOOTER ---
+# Footer
 st.markdown("---")
 st.caption("🎓 DormDeck AI v2.0 | Smart Campus Concierge | Using Gemini 2.5 Flash AI")
