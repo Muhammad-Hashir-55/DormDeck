@@ -87,6 +87,52 @@ with st.sidebar:
     else:
         st.session_state['debug_mode'] = False
 
+    # --- SELLER ONBOARDING FORM (Sidebar) ---
+    st.markdown("---")
+    st.subheader("🧾 Seller Onboarding (Quick)")
+    with st.expander("Add / Update your service (no login required)"):
+        with st.form("seller_form"):
+            s_name = st.text_input("Seller / Shop Name", "")
+            s_category = st.selectbox("Category", ["Food", "Stationery", "Services", "Medicine", "Transport", "General"])
+            s_location = st.selectbox("Location", ["H-1","H-2","H-3","H-4","H-5","H-6","H-7","H-8","H-12","Library","Cafeteria"])
+            s_open = st.text_input("Open Time (HH:MM) or '24/7'", "18:00")
+            s_close = st.text_input("Close Time (HH:MM) or '24/7'", "03:00")
+            s_whatsapp = st.text_input("WhatsApp (country code + number, e.g. 92300xxxxxxx)")
+            s_desc = st.text_area("Short Description", "")
+            s_keywords = st.text_input("Keywords (comma separated)", "")
+            s_form = st.text_input("Optional Google Form URL", "")
+
+            submitted = st.form_submit_button("➕ Add Service")
+            if submitted:
+                # simple validations
+                errors = []
+                if not s_name.strip():
+                    errors.append("Name required.")
+                if not s_whatsapp.strip() or not s_whatsapp.strip().isdigit():
+                    errors.append("WhatsApp must be digits only (include country code).")
+                # Prevent obviously bad entries
+                if errors:
+                    for e in errors:
+                        st.error(e)
+                else:
+                    entry = {
+                        "name": s_name.strip(),
+                        "category": s_category,
+                        "location": s_location,
+                        "open_time": s_open.strip(),
+                        "close_time": s_close.strip(),
+                        "description": s_desc.strip(),
+                        "keywords": [k.strip() for k in s_keywords.split(",") if k.strip()],
+                        "whatsapp": s_whatsapp.strip(),
+                        "form_url": s_form.strip() or None
+                    }
+                    try:
+                        added = dormdeck_engine.add_service_entry(entry)
+                        st.success(f"Service added ✅ (id: {added['id']}). It will appear in search immediately.")
+                    except Exception as ex:
+                        st.error(f"Failed to add service: {ex}")
+
+
     st.markdown("---")
 
     if st.button("🗑️ Clear Chat History"):
