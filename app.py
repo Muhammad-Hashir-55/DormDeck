@@ -13,7 +13,7 @@ st.set_page_config(
 # Custom CSS for premium look
 st.markdown("""
 <style>
-    header {visibility: hidden;}
+    
     .block-container {padding-top: 2rem;}
 
     .stChatMessage {
