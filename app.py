@@ -39,14 +39,18 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# --- Helper: JavaScript Redirect for Logging + Opening Link ---
+# --- Helper: Improved JavaScript Redirect ---
+# Uses anchor tag click to reduce popup blocking issues
 def open_link_js(url):
     js = f"""
     <script>
-        window.open('{url}', '_blank').focus();
+        var a = window.document.createElement("a");
+        a.target = '_blank';
+        a.href = "{url}";
+        a.click();
     </script>
     """
-    components.html(js, height=0, width=0)
+    components.html(js, height=0)
 
 # --- Helper: get current page param (modern API) ---
 params = st.query_params
@@ -116,7 +120,6 @@ with st.sidebar:
                         added = dormdeck_engine.add_service_entry(entry)
                         st.success(f"Service added ✅ (id: {added['id']}). It will appear in search immediately.")
                     except ValueError as dup_err:
-                        # Friendly warning when duplicate detected
                         st.warning(str(dup_err))
                     except Exception as ex:
                         st.error(f"Failed to add service: {ex}")
@@ -129,12 +132,10 @@ with st.sidebar:
     if st.session_state.get("is_admin"):
         st.info("You are logged in as admin.")
         if st.button("Open Admin Panel"):
-            # open admin page using modern API
             st.query_params = {"page": ["admin"]}
             st.rerun()
         if st.button("Logout Admin"):
             st.session_state["is_admin"] = False
-            # return to main page
             st.query_params = {"page": ["main"]}
             st.rerun()
     else:
@@ -152,11 +153,14 @@ with st.sidebar:
                     st.error("Invalid credentials.")
 
     st.markdown("---")
-    if st.button("🗑️ Clear Chat History"):
+    
+    # --- FIX 1: Clear Chat using Callback ---
+    def clear_chat_history():
         st.session_state.messages = [
             {"role": "assistant", "content": f"Chat cleared! I'm ready to help. What do you need near **{user_location}**?"}
         ]
-        st.rerun()
+    
+    st.button("🗑️ Clear Chat History", on_click=clear_chat_history)
 
 # --- 3. SESSION STATE ---
 if "messages" not in st.session_state:
@@ -493,11 +497,14 @@ if 'last_results' in st.session_state and st.session_state['last_results']:
                     st.progress(score / 100, text=f"Match Score: {score}%")
                 
                 with col2:
-                    # --- METRICS 1 & 3: AUTOMATED LOGGING BUTTONS ---
-                    # We use standard buttons that trigger python code (logging) THEN execute JS to open link
+                    # --- FIX 2: Better Link Formatting & Redirection ---
+                    
+                    # 1. Clean the WhatsApp number (Remove spaces, +, -)
+                    raw_wa = str(service.get('whatsapp', ''))
+                    clean_wa = raw_wa.replace('+', '').replace(' ', '').replace('-', '')
                     
                     wa_msg = f"Hi {service.get('name')}! 👋 I found you on DormDeck. I'm in {user_location}. I need help."
-                    wa_link = f"https://wa.me/{service.get('whatsapp')}?text={wa_msg}"
+                    wa_link = f"https://wa.me/{clean_wa}?text={wa_msg}"
                     
                     # Whatsapp Button
                     # Unique Key is vital: session_id + service_id
@@ -510,7 +517,7 @@ if 'last_results' in st.session_state and st.session_state['last_results']:
                             # 1. Log the metric
                             dormdeck_engine.record_action(sid, "wa_click", svc_id)
                             st.toast("Redirecting to WhatsApp... (Action Logged)", icon="🚀")
-                            # 2. Open Link via JS
+                            # 2. Open Link via JS (Improved)
                             open_link_js(wa_link)
                     
                     # Smart Button 2: Google Form (if exists)
@@ -521,7 +528,7 @@ if 'last_results' in st.session_state and st.session_state['last_results']:
                                 # 1. Log the metric
                                 dormdeck_engine.record_action(sid, "form_click", svc_id)
                                 st.toast("Opening Order Form... (Action Logged)", icon="📝")
-                                # 2. Open Link via JS
+                                # 2. Open Link via JS (Improved)
                                 open_link_js(form_url)
                 
                 st.markdown("---")
