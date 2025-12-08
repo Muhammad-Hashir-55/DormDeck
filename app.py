@@ -1,5 +1,6 @@
-# app.py (full file) - Admin Panel with metrics + logging buttons added
+# app.py (full file) - Admin Panel with metrics + AUTOMATED logging buttons
 import streamlit as st
+import streamlit.components.v1 as components
 import time
 import dormdeck_engine
 from dotenv import load_dotenv
@@ -9,7 +10,7 @@ from datetime import datetime, timedelta
 # load env (for admin credentials)
 load_dotenv()
 ADMIN_USER = os.getenv("ADMIN_USER_DORMDECK")
-ADMIN_PASS = os.getenv("ADMIN_PASS_DORMDECK")  # change in .env or Streamlit secrets
+ADMIN_PASS = os.getenv("ADMIN_PASS_DORMDECK")
 
 # --- 1. PAGE CONFIG & STYLING ---
 st.set_page_config(
@@ -24,14 +25,28 @@ st.markdown("""
 <style>
     .block-container {padding-top: 2rem;}
     .stChatMessage {border-radius: 15px; padding: 10px; margin-bottom: 10px;}
-    .stButton button {background-color: #25D366 !important; color: white !important; border: none !important; border-radius: 8px !important; font-weight: bold !important;}
-    .stButton button:hover {background-color: #128C7E !important;}
+    /* Style for the Smart Buttons to look like Call-to-Actions */
+    .stButton button {
+        width: 100%;
+        border-radius: 8px !important;
+        font-weight: bold !important;
+        transition: all 0.2s ease;
+    }
     .status-open { color: #25D366; font-weight: bold; border: 1px solid #25D366; padding: 2px 8px; border-radius: 12px; font-size: 0.8rem; display: inline-block; margin-bottom: 5px; }
     .status-closed { color: #FF4B4B; font-weight: bold; border: 1px solid #FF4B4B; padding: 2px 8px; border-radius: 12px; font-size: 0.8rem; display: inline-block; margin-bottom: 5px; }
     .stProgress > div > div > div { background-color: #25D366; }
     .stChatInput {border-radius: 20px !important;}
 </style>
 """, unsafe_allow_html=True)
+
+# --- Helper: JavaScript Redirect for Logging + Opening Link ---
+def open_link_js(url):
+    js = f"""
+    <script>
+        window.open('{url}', '_blank').focus();
+    </script>
+    """
+    components.html(js, height=0, width=0)
 
 # --- Helper: get current page param (modern API) ---
 params = st.query_params
@@ -152,13 +167,18 @@ if "messages" not in st.session_state:
 if "pending_quick_query" not in st.session_state:
     st.session_state.pending_quick_query = None
 
+if "last_session_id" not in st.session_state:
+    st.session_state.last_session_id = None
+
 # --- ADMIN PAGE ---
 if page == "admin" and st.session_state.get("is_admin"):
 
-    # --- METRICS SECTION (added) ---
+    # --- METRICS SECTION (Actionable Metrics) ---
     st.title("🔧 Admin Panel — DormDeck Services")
 
-    st.markdown("### 📈 Metrics & Logs")
+    st.markdown("### 📈 Actionable Metrics")
+    st.info("These metrics track the 'Measure' phase assumptions: Connection Conversion (Intent), Dead Ends (Supply), and Location Sensitivity.")
+    
     time_option = st.selectbox("Time range", ["All time", "Last 7 days", "Last 30 days", "Custom"], index=0)
     start_iso = None
     end_iso = None
@@ -190,12 +210,27 @@ if page == "admin" and st.session_state.get("is_admin"):
 
     col1, col2, col3 = st.columns(3)
     with col1:
-        st.metric("Connection Conversion Rate (CCR)", f"{c['CCR']} %", delta=f"{c.get('conversions',0)}/{c.get('sessions',0)} conversions")
+        st.metric(
+            "Connection Conversion Rate (CCR)", 
+            f"{c['CCR']} %", 
+            delta=f"{c.get('conversions',0)}/{c.get('sessions',0)} conversions",
+            help="Target > 15%. Formula: (Unique Clicks on WA/Form / Total Queries) * 100"
+        )
     with col2:
-        st.metric("Search Dead End Rate", f"{d['dead_end_rate']} %", delta=f"{d.get('dead_ends',0)}/{d.get('sessions',0)} dead-ends")
+        st.metric(
+            "Search Dead End Rate", 
+            f"{d['dead_end_rate']} %", 
+            delta=f"{d.get('dead_ends',0)}/{d.get('sessions',0)} dead-ends",
+            help="Target < 40%. Frequency of 'fallback' results."
+        )
     with col3:
         ratio_str = f"{l['ratio']:.2f}" if l.get("ratio") is not None else "N/A"
-        st.metric("Location sensitivity (same / total)", ratio_str, delta=f"{l.get('same_clicks',0)}/{l.get('total_clicks',0)} clicks")
+        st.metric(
+            "Location Sensitivity (Same/Total)", 
+            ratio_str, 
+            delta=f"{l.get('same_clicks',0)}/{l.get('total_clicks',0)} clicks",
+            help="Target NOT 1:1. Ratio of clicks on Same-Hostel vs Adjacent/Far."
+        )
 
     st.markdown("---")
     # Export CSV of events
@@ -376,104 +411,39 @@ for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
 
-# Process quick action
+# 1. HANDLE NEW SEARCH (from input or quick action)
 if st.session_state.pending_quick_query:
-    q = st.session_state.pending_quick_query
+    prompt = st.session_state.pending_quick_query
     st.session_state.pending_quick_query = None
-    st.session_state.messages.append({"role": "user", "content": q})
-    with st.chat_message("assistant"):
-        with st.spinner("🧠 Scanning campus services..."):
-            time.sleep(0.7)
-            result_data = dormdeck_engine.get_all_recommendations(q, user_location)
+else:
+    prompt = st.chat_input("Tell me what you need... (Ex: I need fries, medicine delivery, printing)")
 
-            # record the session (events)
-            try:
-                session_id = dormdeck_engine.record_search(q, user_location, result_data)
-                st.session_state['last_session_id'] = session_id
-            except Exception as e:
-                session_id = None
-                st.error(f"Logging session failed: {e}")
-
-            results = result_data["results"]
-            message = result_data["message"]
-            result_type = result_data["type"]
-            if result_type == "smart":
-                if results:
-                    intro = f"✅ {message}\n\n**Best match:** {results[0]['service']['name']}"
-                else:
-                    intro = "🤔 No perfect matches. Here are nearby options:"
-            else:
-                intro = f"💡 {message}"
-            st.markdown(intro)
-            st.session_state.messages.append({"role": "assistant", "content": intro})
-            if results:
-                for idx, item in enumerate(results, 1):
-                    service = item['service']
-                    score = int(item['score'])
-                    is_open = item['is_open']
-                    badge_class = "status-open" if is_open else "status-closed"
-                    badge_text = "🟢 OPEN NOW" if is_open else "🔴 CLOSED"
-                    emoji = {
-                        "Food": "🍔",
-                        "Stationery": "📚",
-                        "Services": "🛠️",
-                        "Medicine": "💊",
-                        "Transport": "🚗"
-                    }.get(service.get('category'), "📍")
-                    with st.container():
-                        col1, col2 = st.columns([0.7, 0.3])
-                        with col1:
-                            st.markdown(f"### {idx}. {service.get('name')} {emoji}")
-                            st.markdown(f"<span class='{badge_class}'>{badge_text}</span>", unsafe_allow_html=True)
-                            st.caption(f"📍 **Location:** {service.get('location')} • **Category:** {service.get('category')}")
-                            st.write(f"📝 **Description:** {service.get('description')}")
-                            st.caption(f"⏰ **Hours:** {service.get('open_time')} - {service.get('close_time')}")
-                            st.progress(score / 100, text=f"Match Score: {score}%")
-                        with col2:
-                            wa_msg = f"Hi {service.get('name')}! 👋 I found you on DormDeck. I'm in {user_location}. I need: {q}"
-                            wa_link = f"https://wa.me/{service.get('whatsapp')}?text={wa_msg}"
-                            st.link_button("💬 Chat on WhatsApp", wa_link, use_container_width=True)
-
-                            # --- METRICS LOGGING BUTTONS (added) ---
-                            sid = st.session_state.get('last_session_id')
-                            svc_id = service.get('id')
-                            if sid:
-                                if st.button("Log: I contacted seller (WhatsApp)", key=f"wa_{sid}_{svc_id}"):
-                                    ok = dormdeck_engine.record_action(sid, "wa_click", svc_id)
-                                    if ok:
-                                        st.success("Logged WhatsApp click ✅")
-                                    else:
-                                        st.error("Failed to log action.")
-                                if service.get("form_url"):
-                                    if st.button("Log: I submitted form", key=f"form_{sid}_{svc_id}"):
-                                        ok = dormdeck_engine.record_action(sid, "form_click", svc_id)
-                                        if ok:
-                                            st.success("Logged Form submission ✅")
-                                        else:
-                                            st.error("Failed to log action.")
-                            # --- end logging buttons ---
-
-            st.rerun()
-
-# Main chat input
-if prompt := st.chat_input("Tell me what you need... (Ex: I need fries, medicine delivery, printing)"):
+if prompt:
+    # Append User Message
     st.session_state.messages.append({"role": "user", "content": prompt})
+    
     with st.chat_message("assistant"):
         with st.spinner("🧠 Scanning campus services..."):
             time.sleep(0.7)
+            # Perform Search
             result_data = dormdeck_engine.get_all_recommendations(prompt, user_location)
-
-            # record the session (events)
+            
+            # --- METRIC 2: DEAD END & LOGGING ---
+            # Record the session (generates session_id)
             try:
                 session_id = dormdeck_engine.record_search(prompt, user_location, result_data)
                 st.session_state['last_session_id'] = session_id
+                # Save results to session state so they persist when buttons are clicked (which triggers rerun)
+                st.session_state['last_results'] = result_data
             except Exception as e:
                 session_id = None
                 st.error(f"Logging session failed: {e}")
 
+            # Prepare Display Message
             results = result_data["results"]
             message = result_data["message"]
             result_type = result_data["type"]
+            
             if result_type == "smart":
                 if results:
                     intro = f"✅ {message}\n\n**Best match:** {results[0]['service']['name']}"
@@ -481,54 +451,80 @@ if prompt := st.chat_input("Tell me what you need... (Ex: I need fries, medicine
                     intro = "🤔 No perfect matches. Here are nearby options:"
             else:
                 intro = f"💡 {message}"
-            st.markdown(intro)
+            
+            # Append Assistant Response
             st.session_state.messages.append({"role": "assistant", "content": intro})
-            if results:
-                for idx, item in enumerate(results, 1):
-                    service = item['service']
-                    score = int(item['score'])
-                    is_open = item['is_open']
-                    badge_class = "status-open" if is_open else "status-closed"
-                    badge_text = "🟢 OPEN NOW" if is_open else "🔴 CLOSED"
-                    emoji = {
-                        "Food": "🍔",
-                        "Stationery": "📚",
-                        "Services": "🛠️",
-                        "Medicine": "💊",
-                        "Transport": "🚗"
-                    }.get(service.get('category'), "📍")
-                    with st.container():
-                        col1, col2 = st.columns([0.7, 0.3])
-                        with col1:
-                            st.markdown(f"### {idx}. {service.get('name')} {emoji}")
-                            st.markdown(f"<span class='{badge_class}'>{badge_text}</span>", unsafe_allow_html=True)
-                            st.caption(f"📍 **Location:** {service.get('location')} • **Category:** {service.get('category')}")
-                            st.write(f"📝 **Description:** {service.get('description')}")
-                            st.caption(f"⏰ **Hours:** {service.get('open_time')} - {service.get('close_time')}")
-                            st.progress(score / 100, text=f"Match Score: {score}%")
-                        with col2:
-                            wa_msg = f"Hi {service.get('name')}! 👋 I found you on DormDeck. I'm in {user_location}. I need: {prompt}"
-                            wa_link = f"https://wa.me/{service.get('whatsapp')}?text={wa_msg}"
-                            st.link_button("💬 Chat on WhatsApp", wa_link, use_container_width=True)
+            st.rerun()
 
-                            # --- METRICS LOGGING BUTTONS (added) ---
-                            sid = st.session_state.get('last_session_id')
-                            svc_id = service.get('id')
+# 2. RENDER RESULTS (Persistent across reruns)
+# We check if there are results from the last search to display them below the chat
+if 'last_results' in st.session_state and st.session_state['last_results']:
+    results = st.session_state['last_results'].get("results", [])
+    
+    # We display them in a container below the chat history
+    with st.container():
+        st.markdown("### 🔍 Search Results")
+        
+        if not results:
+            st.warning("No services found.")
+        
+        for idx, item in enumerate(results, 1):
+            service = item['service']
+            score = int(item['score'])
+            is_open = item['is_open']
+            
+            badge_class = "status-open" if is_open else "status-closed"
+            badge_text = "🟢 OPEN NOW" if is_open else "🔴 CLOSED"
+            
+            emoji = {
+                "Food": "🍔", "Stationery": "📚", "Services": "🛠️",
+                "Medicine": "💊", "Transport": "🚗"
+            }.get(service.get('category'), "📍")
+
+            with st.container():
+                st.markdown(f"#### {idx}. {service.get('name')} {emoji}")
+                col1, col2 = st.columns([0.65, 0.35])
+                
+                with col1:
+                    st.markdown(f"<span class='{badge_class}'>{badge_text}</span>", unsafe_allow_html=True)
+                    st.caption(f"📍 **{service.get('location')}** • {service.get('category')}")
+                    st.write(f"_{service.get('description')}_")
+                    st.caption(f"⏰ {service.get('open_time')} - {service.get('close_time')}")
+                    st.progress(score / 100, text=f"Match Score: {score}%")
+                
+                with col2:
+                    # --- METRICS 1 & 3: AUTOMATED LOGGING BUTTONS ---
+                    # We use standard buttons that trigger python code (logging) THEN execute JS to open link
+                    
+                    wa_msg = f"Hi {service.get('name')}! 👋 I found you on DormDeck. I'm in {user_location}. I need help."
+                    wa_link = f"https://wa.me/{service.get('whatsapp')}?text={wa_msg}"
+                    
+                    # Whatsapp Button
+                    # Unique Key is vital: session_id + service_id
+                    sid = st.session_state.get('last_session_id')
+                    svc_id = service.get('id')
+                    
+                    # Smart Button 1: WhatsApp
+                    if st.button("💬 Chat on WhatsApp", key=f"btn_wa_{sid}_{svc_id}", type="primary"):
+                        if sid:
+                            # 1. Log the metric
+                            dormdeck_engine.record_action(sid, "wa_click", svc_id)
+                            st.toast("Redirecting to WhatsApp... (Action Logged)", icon="🚀")
+                            # 2. Open Link via JS
+                            open_link_js(wa_link)
+                    
+                    # Smart Button 2: Google Form (if exists)
+                    form_url = service.get("form_url")
+                    if form_url:
+                        if st.button("📝 Fill Order Form", key=f"btn_form_{sid}_{svc_id}"):
                             if sid:
-                                if st.button("Log: I contacted seller (WhatsApp)", key=f"wa_{sid}_{svc_id}"):
-                                    ok = dormdeck_engine.record_action(sid, "wa_click", svc_id)
-                                    if ok:
-                                        st.success("Logged WhatsApp click ✅")
-                                    else:
-                                        st.error("Failed to log action.")
-                                if service.get("form_url"):
-                                    if st.button("Log: I submitted form", key=f"form_{sid}_{svc_id}"):
-                                        ok = dormdeck_engine.record_action(sid, "form_click", svc_id)
-                                        if ok:
-                                            st.success("Logged Form submission ✅")
-                                        else:
-                                            st.error("Failed to log action.")
-                            # --- end logging buttons ---
+                                # 1. Log the metric
+                                dormdeck_engine.record_action(sid, "form_click", svc_id)
+                                st.toast("Opening Order Form... (Action Logged)", icon="📝")
+                                # 2. Open Link via JS
+                                open_link_js(form_url)
+                
+                st.markdown("---")
 
 # Footer
 st.markdown("---")
