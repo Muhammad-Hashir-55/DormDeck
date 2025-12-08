@@ -156,6 +156,7 @@ with st.sidebar:
     
     # --- FIX 1: Clear Chat using Callback ---
     def clear_chat_history():
+        st.rerun()
         st.session_state.messages = [
             {"role": "assistant", "content": f"Chat cleared! I'm ready to help. What do you need near **{user_location}**?"}
         ]
