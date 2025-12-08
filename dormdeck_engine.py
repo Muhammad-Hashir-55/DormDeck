@@ -292,3 +292,209 @@ def delete_service(service_id):
         return False
     safe_write_services(new_services)
     return True
+
+
+# ---------- EVENTS & METRICS (append to dormdeck_engine.py) ----------
+EVENTS_PATH = "events.json"
+
+def safe_load_events():
+    try:
+        with open(EVENTS_PATH, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except FileNotFoundError:
+        return []
+    except json.JSONDecodeError:
+        print("⚠️ Error: events.json is malformed. Returning empty list.")
+        return []
+
+def safe_write_events(events):
+    tmp = EVENTS_PATH + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(events, f, ensure_ascii=False, indent=2)
+    os.replace(tmp, EVENTS_PATH)
+
+def _now_iso():
+    return dt.now().isoformat()
+
+def record_search(user_query, user_location, result_data):
+    """
+    Record a search session.
+    - user_query: raw query string
+    - user_location: e.g. "H-5"
+    - result_data: output of get_all_recommendations(...) {type, results, message}
+    Returns: session_id (int)
+    """
+    events = safe_load_events()
+    # session id: incremental
+    max_id = max([int(e.get("id", 0)) for e in events], default=0)
+    sid = max_id + 1
+
+    # collect top result service ids (if any)
+    top_ids = []
+    for r in result_data.get("results", []):
+        svc = r.get("service", {})
+        if svc.get("id") is not None:
+            try:
+                top_ids.append(int(svc.get("id")))
+            except:
+                pass
+
+    session = {
+        "id": sid,
+        "type": "search_session",
+        "timestamp": _now_iso(),
+        "query": user_query,
+        "user_location": user_location,
+        "result_type": result_data.get("type"),
+        "top_service_ids": top_ids,
+        "results_snapshot": result_data.get("results", []),  # small snapshot for later debugging
+        "actions": []  # will be filled by record_action
+    }
+    events.append(session)
+    safe_write_events(events)
+    return sid
+
+def record_action(session_id, action_type, service_id=None, note=None):
+    """
+    Record an action taken during/after a session.
+    - action_type: "wa_click" | "form_click" | "manual_confirm" | "other"
+    - service_id: id of the service clicked (optional)
+    - note: optional string
+    Returns: True on success, False if session not found
+    """
+    events = safe_load_events()
+    found = False
+    for idx, e in enumerate(events):
+        if int(e.get("id", -1)) == int(session_id) and e.get("type") == "search_session":
+            found = True
+            action = {
+                "timestamp": _now_iso(),
+                "action_type": action_type,
+                "service_id": service_id,
+                "note": note
+            }
+            # append to actions
+            events[idx].setdefault("actions", []).append(action)
+            break
+    if not found:
+        return False
+    safe_write_events(events)
+    return True
+
+# ---------- METRICS ----------
+
+def _filter_events_timeframe(events, start_iso=None, end_iso=None):
+    if not start_iso and not end_iso:
+        return events
+    out = []
+    for e in events:
+        t = e.get("timestamp")
+        if not t:
+            continue
+        if start_iso and t < start_iso:
+            continue
+        if end_iso and t > end_iso:
+            continue
+        out.append(e)
+    return out
+
+def compute_CCR(start_iso=None, end_iso=None):
+    """
+    Connection Conversion Rate:
+    percentage of search sessions that resulted in at least one high-intent action
+    (wa_click or form_click).
+    """
+    events = safe_load_events()
+    events = _filter_events_timeframe(events, start_iso, end_iso)
+    sessions = [e for e in events if e.get("type") == "search_session"]
+    if not sessions:
+        return {"CCR": 0.0, "sessions": 0, "conversions": 0}
+    conv = 0
+    for s in sessions:
+        acts = s.get("actions", [])
+        if any(a.get("action_type") in ("wa_click", "form_click") for a in acts):
+            conv += 1
+    rate = (conv / len(sessions)) * 100.0
+    return {"CCR": round(rate, 2), "sessions": len(sessions), "conversions": conv}
+
+def compute_dead_end_rate(start_iso=None, end_iso=None):
+    """
+    Dead End Rate: fraction of search sessions that returned fallback results.
+    """
+    events = safe_load_events()
+    events = _filter_events_timeframe(events, start_iso, end_iso)
+    sessions = [e for e in events if e.get("type") == "search_session"]
+    if not sessions:
+        return {"dead_end_rate": 0.0, "sessions": 0, "dead_ends": 0}
+    dead = sum(1 for s in sessions if s.get("result_type") == "fallback")
+    rate = (dead / len(sessions)) * 100.0
+    return {"dead_end_rate": round(rate, 2), "sessions": len(sessions), "dead_ends": dead}
+
+def compute_location_sensitivity(start_iso=None, end_iso=None):
+    """
+    Location Sensitivity Score:
+    Compare clicks on Same-Hostel results vs Adjacent/Far.
+    Returns counts and ratio same/(same+other).
+    """
+    events = safe_load_events()
+    events = _filter_events_timeframe(events, start_iso, end_iso)
+    sessions = [e for e in events if e.get("type") == "search_session"]
+    if not sessions:
+        return {"same_clicks": 0, "other_clicks": 0, "ratio": None, "total_clicks": 0}
+
+    same = 0
+    other = 0
+    # Build quick lookup of services by id
+    services = {s.get("id"): s for s in safe_load_services()}
+    for s in sessions:
+        loc = (s.get("user_location") or "").strip().lower()
+        for a in s.get("actions", []):
+            if a.get("action_type") not in ("wa_click", "form_click"):
+                continue
+            sid = a.get("service_id")
+            svc = services.get(sid)
+            svc_loc = (svc.get("location") or "").strip().lower() if svc else None
+            score = calculate_location_score(svc_loc, loc)
+            if score >= 1.0:
+                same += 1
+            else:
+                other += 1
+    total = same + other
+    ratio = None
+    if total > 0:
+        ratio = round(same / total, 3)  # fraction of same-hostel clicks
+    return {"same_clicks": same, "other_clicks": other, "ratio": ratio, "total_clicks": total}
+
+# Convenience: aggregated metrics
+def compute_all_metrics(start_iso=None, end_iso=None):
+    c = compute_CCR(start_iso, end_iso)
+    d = compute_dead_end_rate(start_iso, end_iso)
+    l = compute_location_sensitivity(start_iso, end_iso)
+    return {"CCR": c, "DeadEnd": d, "LocationSensitivity": l}
+
+# ---------- EVENTS EXPORT ----------
+def get_all_events():
+    return safe_load_events()
+
+def events_to_csv_bytes(start_iso=None, end_iso=None):
+    """
+    Return CSV bytes for download. Columns: session_id, timestamp, query, user_location, result_type, action_timestamp, action_type, service_id, note
+    """
+    import csv, io
+    events = _filter_events_timeframe(safe_load_events(), start_iso, end_iso)
+    out = io.StringIO()
+    writer = csv.writer(out)
+    writer.writerow(["session_id","session_timestamp","query","user_location","result_type","action_timestamp","action_type","service_id","note"])
+    for s in events:
+        sid = s.get("id")
+        stime = s.get("timestamp")
+        q = s.get("query","")
+        loc = s.get("user_location","")
+        rtype = s.get("result_type","")
+        acts = s.get("actions", []) or []
+        if not acts:
+            writer.writerow([sid, stime, q, loc, rtype, "","","",""])
+        else:
+            for a in acts:
+                writer.writerow([sid, stime, q, loc, rtype, a.get("timestamp",""), a.get("action_type",""), a.get("service_id",""), a.get("note","")])
+    return out.getvalue().encode("utf-8")

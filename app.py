@@ -1,9 +1,10 @@
-# app.py (full file) - Admin Panel with modern st.query_params usage
+# app.py (full file) - Admin Panel with metrics + logging buttons added
 import streamlit as st
 import time
 import dormdeck_engine
 from dotenv import load_dotenv
 import os
+from datetime import datetime, timedelta
 
 # load env (for admin credentials)
 load_dotenv()
@@ -153,7 +154,98 @@ if "pending_quick_query" not in st.session_state:
 
 # --- ADMIN PAGE ---
 if page == "admin" and st.session_state.get("is_admin"):
+
+    # --- METRICS SECTION (added) ---
     st.title("🔧 Admin Panel — DormDeck Services")
+
+    st.markdown("### 📈 Metrics & Logs")
+    time_option = st.selectbox("Time range", ["All time", "Last 7 days", "Last 30 days", "Custom"], index=0)
+    start_iso = None
+    end_iso = None
+    if time_option == "Last 7 days":
+        end_iso = datetime.now().isoformat()
+        start_iso = (datetime.now() - timedelta(days=7)).isoformat()
+    elif time_option == "Last 30 days":
+        end_iso = datetime.now().isoformat()
+        start_iso = (datetime.now() - timedelta(days=30)).isoformat()
+    elif time_option == "Custom":
+        c1 = st.date_input("Start date")
+        c2 = st.date_input("End date")
+        if c1:
+            start_iso = datetime.combine(c1, datetime.min.time()).isoformat()
+        if c2:
+            end_iso = datetime.combine(c2, datetime.max.time()).isoformat()
+
+    try:
+        metrics = dormdeck_engine.compute_all_metrics(start_iso, end_iso)
+        c = metrics["CCR"]
+        d = metrics["DeadEnd"]
+        l = metrics["LocationSensitivity"]
+    except Exception as e:
+        st.error(f"Failed to compute metrics: {e}")
+        metrics = None
+        c = {"CCR": 0.0, "sessions": 0, "conversions": 0}
+        d = {"dead_end_rate": 0.0, "sessions": 0, "dead_ends": 0}
+        l = {"same_clicks": 0, "other_clicks": 0, "ratio": None, "total_clicks": 0}
+
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.metric("Connection Conversion Rate (CCR)", f"{c['CCR']} %", delta=f"{c.get('conversions',0)}/{c.get('sessions',0)} conversions")
+    with col2:
+        st.metric("Search Dead End Rate", f"{d['dead_end_rate']} %", delta=f"{d.get('dead_ends',0)}/{d.get('sessions',0)} dead-ends")
+    with col3:
+        ratio_str = f"{l['ratio']:.2f}" if l.get("ratio") is not None else "N/A"
+        st.metric("Location sensitivity (same / total)", ratio_str, delta=f"{l.get('same_clicks',0)}/{l.get('total_clicks',0)} clicks")
+
+    st.markdown("---")
+    # Export CSV of events
+    try:
+        csv_bytes = dormdeck_engine.events_to_csv_bytes(start_iso, end_iso)
+        st.download_button("⬇️ Download events CSV", csv_bytes, file_name="dormdeck_events.csv", mime="text/csv")
+    except Exception as e:
+        st.error(f"Failed to prepare CSV export: {e}")
+
+    st.markdown("### Raw Events")
+    events = dormdeck_engine.get_all_events()
+    if events:
+        import pandas as pd
+        rows = []
+        for s in events:
+            sid = s.get("id")
+            acts = s.get("actions") or []
+            if acts:
+                for a in acts:
+                    rows.append({
+                        "session_id": sid,
+                        "session_ts": s.get("timestamp"),
+                        "query": s.get("query"),
+                        "user_location": s.get("user_location"),
+                        "result_type": s.get("result_type"),
+                        "action_ts": a.get("timestamp"),
+                        "action_type": a.get("action_type"),
+                        "service_id": a.get("service_id"),
+                        "note": a.get("note")
+                    })
+            else:
+                rows.append({
+                    "session_id": sid,
+                    "session_ts": s.get("timestamp"),
+                    "query": s.get("query"),
+                    "user_location": s.get("user_location"),
+                    "result_type": s.get("result_type"),
+                    "action_ts": None,
+                    "action_type": None,
+                    "service_id": None,
+                    "note": None
+                })
+        df = pd.DataFrame(rows)
+        st.dataframe(df)
+    else:
+        st.info("No events recorded yet.")
+
+    st.markdown("---")
+    # --- END METRICS SECTION ---
+
     st.markdown("Manage `services.json` entries: view, edit, add, delete.")
     services = dormdeck_engine.get_all_services()
 
@@ -293,6 +385,15 @@ if st.session_state.pending_quick_query:
         with st.spinner("🧠 Scanning campus services..."):
             time.sleep(0.7)
             result_data = dormdeck_engine.get_all_recommendations(q, user_location)
+
+            # record the session (events)
+            try:
+                session_id = dormdeck_engine.record_search(q, user_location, result_data)
+                st.session_state['last_session_id'] = session_id
+            except Exception as e:
+                session_id = None
+                st.error(f"Logging session failed: {e}")
+
             results = result_data["results"]
             message = result_data["message"]
             result_type = result_data["type"]
@@ -332,8 +433,26 @@ if st.session_state.pending_quick_query:
                             wa_msg = f"Hi {service.get('name')}! 👋 I found you on DormDeck. I'm in {user_location}. I need: {q}"
                             wa_link = f"https://wa.me/{service.get('whatsapp')}?text={wa_msg}"
                             st.link_button("💬 Chat on WhatsApp", wa_link, use_container_width=True)
-                            if service.get("form_url"):
-                                st.link_button("📝 Fill Google Form", service.get("form_url"), use_container_width=True)
+
+                            # --- METRICS LOGGING BUTTONS (added) ---
+                            sid = st.session_state.get('last_session_id')
+                            svc_id = service.get('id')
+                            if sid:
+                                if st.button("Log: I contacted seller (WhatsApp)", key=f"wa_{sid}_{svc_id}"):
+                                    ok = dormdeck_engine.record_action(sid, "wa_click", svc_id)
+                                    if ok:
+                                        st.success("Logged WhatsApp click ✅")
+                                    else:
+                                        st.error("Failed to log action.")
+                                if service.get("form_url"):
+                                    if st.button("Log: I submitted form", key=f"form_{sid}_{svc_id}"):
+                                        ok = dormdeck_engine.record_action(sid, "form_click", svc_id)
+                                        if ok:
+                                            st.success("Logged Form submission ✅")
+                                        else:
+                                            st.error("Failed to log action.")
+                            # --- end logging buttons ---
+
             st.rerun()
 
 # Main chat input
@@ -343,6 +462,15 @@ if prompt := st.chat_input("Tell me what you need... (Ex: I need fries, medicine
         with st.spinner("🧠 Scanning campus services..."):
             time.sleep(0.7)
             result_data = dormdeck_engine.get_all_recommendations(prompt, user_location)
+
+            # record the session (events)
+            try:
+                session_id = dormdeck_engine.record_search(prompt, user_location, result_data)
+                st.session_state['last_session_id'] = session_id
+            except Exception as e:
+                session_id = None
+                st.error(f"Logging session failed: {e}")
+
             results = result_data["results"]
             message = result_data["message"]
             result_type = result_data["type"]
@@ -382,8 +510,25 @@ if prompt := st.chat_input("Tell me what you need... (Ex: I need fries, medicine
                             wa_msg = f"Hi {service.get('name')}! 👋 I found you on DormDeck. I'm in {user_location}. I need: {prompt}"
                             wa_link = f"https://wa.me/{service.get('whatsapp')}?text={wa_msg}"
                             st.link_button("💬 Chat on WhatsApp", wa_link, use_container_width=True)
-                            if service.get("form_url"):
-                                st.link_button("📝 Fill Google Form", service.get("form_url"), use_container_width=True)
+
+                            # --- METRICS LOGGING BUTTONS (added) ---
+                            sid = st.session_state.get('last_session_id')
+                            svc_id = service.get('id')
+                            if sid:
+                                if st.button("Log: I contacted seller (WhatsApp)", key=f"wa_{sid}_{svc_id}"):
+                                    ok = dormdeck_engine.record_action(sid, "wa_click", svc_id)
+                                    if ok:
+                                        st.success("Logged WhatsApp click ✅")
+                                    else:
+                                        st.error("Failed to log action.")
+                                if service.get("form_url"):
+                                    if st.button("Log: I submitted form", key=f"form_{sid}_{svc_id}"):
+                                        ok = dormdeck_engine.record_action(sid, "form_click", svc_id)
+                                        if ok:
+                                            st.success("Logged Form submission ✅")
+                                        else:
+                                            st.error("Failed to log action.")
+                            # --- end logging buttons ---
 
 # Footer
 st.markdown("---")
