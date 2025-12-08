@@ -154,12 +154,16 @@ with st.sidebar:
 
     st.markdown("---")
     
-    # --- FIX 1: Clear Chat using Callback ---
+    # --- FIX 1: Clear Chat using Callback (NO st.rerun inside) ---
     def clear_chat_history():
-        st.rerun()
+        # Reset messages
         st.session_state.messages = [
             {"role": "assistant", "content": f"Chat cleared! I'm ready to help. What do you need near **{user_location}**?"}
         ]
+        # Clear previous search results so they don't persist
+        st.session_state.last_results = None
+        st.session_state.last_session_id = None
+        st.session_state.pending_quick_query = None
     
     st.button("🗑️ Clear Chat History", on_click=clear_chat_history)
 
