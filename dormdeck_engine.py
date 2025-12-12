@@ -253,7 +253,7 @@ def get_all_recommendations(user_query, user_location):
         return {"type": "smart", "results": smart, "message": "Here are the best matches for your request!"}
     else:
         fall = get_fallback_suggestions(user_location)
-        return {"type": "fallback", "results": fall, "message": "No exact matches — showing popular open spots nearby."}
+        return {"type": "fallback", "results": fall, "message": "No exact matches — showing popular open spots nearby.(Fallback)"}
 
 # --- 5. SERVICE MANAGEMENT (CRUD via SQL) ---
 
