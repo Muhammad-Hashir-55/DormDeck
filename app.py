@@ -99,7 +99,7 @@ with st.sidebar:
             s_whatsapp = st.text_input("WhatsApp (country code + number, e.g. 92300xxxxxxx)")
             s_desc = st.text_area("Short Description", "")
             s_keywords = st.text_input("Keywords (comma separated)", "")
-            s_form = st.text_input("Optional Google Form URL", "")
+            s_form = st.text_input("Optional Google Form URL/Website", "")
 
             submitted = st.form_submit_button("➕ Add Service")
             if submitted:
@@ -372,7 +372,7 @@ if page == "admin" and st.session_state.get("is_admin"):
         a_whatsapp = st.text_input("WhatsApp", "")
         a_desc = st.text_area("Short Description", "")
         a_keywords = st.text_input("Keywords (comma separated)", "")
-        a_form = st.text_input("Optional Google Form URL", "")
+        a_form = st.text_input("Optional Google Form URL/Website", "")
 
         add_ok = st.form_submit_button("Add Service (Admin)")
         if add_ok:
@@ -536,7 +536,7 @@ if 'last_results' in st.session_state and st.session_state['last_results']:
                     # Smart Button 2: Google Form (if exists)
                     form_url = service.get("form_url")
                     if form_url:
-                        if st.button("📝 Fill Order Form", key=f"btn_form_{sid}_{svc_id}"):
+                        if st.button("📝 Fill Order Form/Go to Website", key=f"btn_form_{sid}_{svc_id}"):
                             if sid:
                                 # 1. Log the metric
                                 dormdeck_engine.record_action(sid, "form_click", svc_id)
