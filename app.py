@@ -34,7 +34,7 @@ st.markdown("""
     }
     .status-open { color: #25D366; font-weight: bold; border: 1px solid #25D366; padding: 2px 8px; border-radius: 12px; font-size: 0.8rem; display: inline-block; margin-bottom: 5px; }
     .status-closed { color: #FF4B4B; font-weight: bold; border: 1px solid #FF4B4B; padding: 2px 8px; border-radius: 12px; font-size: 0.8rem; display: inline-block; margin-bottom: 5px; }
-    .stProgress > div > div > div { background-color: #25D366; }
+    .stProgress > div > div > div { background-color: #800080; }
     .stChatInput {border-radius: 20px !important;}
 </style>
 """, unsafe_allow_html=True)
@@ -64,6 +64,7 @@ with st.sidebar:
     st.markdown("---")
 
     st.subheader("📍 Your Context")
+    # Users are physical, so they stay in hostels/campus spots
     user_location = st.selectbox(
         "Current Location",
         ["H-1", "H-2", "H-3", "H-4", "H-5", "H-6", "H-7", "H-8", "H-12", "Library", "Cafeteria"],
@@ -86,7 +87,13 @@ with st.sidebar:
         with st.form("seller_form"):
             s_name = st.text_input("Seller / Shop Name", "")
             s_category = st.selectbox("Category", ["Food", "Stationery", "Services", "Medicine", "Transport", "General"])
-            s_location = st.selectbox("Location", ["H-1","H-2","H-3","H-4","H-5","H-6","H-7","H-8","H-12","Library","Cafeteria"])
+            
+            # --- UPDATE: Added Remote/Online options for Sellers ---
+            s_location = st.selectbox("Location", [
+                "H-1","H-2","H-3","H-4","H-5","H-6","H-7","H-8","H-12",
+                "Library","Cafeteria", "Remote", "Online"
+            ])
+            
             s_open = st.text_input("Open Time (HH:MM) or '24/7'", "18:00")
             s_close = st.text_input("Close Time (HH:MM) or '24/7'", "03:00")
             s_whatsapp = st.text_input("WhatsApp (country code + number, e.g. 92300xxxxxxx)")
@@ -120,6 +127,7 @@ with st.sidebar:
                         added = dormdeck_engine.add_service_entry(entry)
                         st.success(f"Service added ✅ (id: {added['id']}). It will appear in search immediately.")
                     except ValueError as dup_err:
+                        # Friendly warning when duplicate detected
                         st.warning(str(dup_err))
                     except Exception as ex:
                         st.error(f"Failed to add service: {ex}")
@@ -290,7 +298,7 @@ if page == "admin" and st.session_state.get("is_admin"):
     st.markdown("---")
     # --- END METRICS SECTION ---
 
-    st.markdown("Manage `services.json` entries: view, edit, add, delete.")
+    st.markdown("Manage `database` entries: view, edit, add, delete.")
     services = dormdeck_engine.get_all_services()
 
     # show dataset
@@ -457,7 +465,7 @@ if prompt:
                 if results:
                     intro = f"✅ {message}\n\n**Best match:** {results[0]['service']['name']}"
                 else:
-                    intro = "🤔 No perfect matches. Here are nearby options:"
+                    intro = "🤔 No perfect matches. Here are nearby options(Fallback):"
             else:
                 intro = f"💡 {message}"
             
