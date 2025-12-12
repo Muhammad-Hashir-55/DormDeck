@@ -1,5 +1,6 @@
 # dormdeck_engine.py
-import sqlite3
+import psycopg2
+from psycopg2.extras import RealDictCursor
 import json
 import os
 from datetime import datetime as dt, time as dttime
@@ -16,70 +17,77 @@ if not API_KEY or API_KEY == "YOUR_GEMINI_API_KEY":
     print("⚠️ WARNING: GEMINI API key missing in environment variables.")
 genai.configure(api_key=API_KEY)
 
-# Database Configuration
-DB_PATH = "dormdeck.db"
+# Supabase/Postgres Configuration
+DB_URL = os.getenv("SUPABASE_DB_URL")
 
 # --- DATABASE UTIL ---
 def get_db_connection():
-    """Establishes a connection to the SQLite database."""
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row  # Allows accessing columns by name
+    """Establishes a connection to the PostgreSQL database."""
+    if not DB_URL:
+        raise ValueError("SUPABASE_DB_URL missing from environment variables.")
+    
+    # RealDictCursor allows us to access columns by name (like row['id'])
+    conn = psycopg2.connect(DB_URL, cursor_factory=RealDictCursor)
     return conn
 
 def init_db():
     """Initializes the database tables if they do not exist."""
     conn = get_db_connection()
+    cur = conn.cursor()
     
-    # 1. Services Table
-    conn.execute('''
+    # 1. Services Table (Using SERIAL for auto-increment in Postgres)
+    cur.execute('''
         CREATE TABLE IF NOT EXISTS services (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id SERIAL PRIMARY KEY,
             name TEXT NOT NULL,
             category TEXT,
             location TEXT,
             open_time TEXT,
             close_time TEXT,
             description TEXT,
-            keywords TEXT, -- Stored as JSON string
+            keywords TEXT,
             whatsapp TEXT,
             form_url TEXT
-        )
+        );
     ''')
 
-    # 2. Sessions Table (Events)
-    conn.execute('''
+    # 2. Sessions Table
+    cur.execute('''
         CREATE TABLE IF NOT EXISTS sessions (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id SERIAL PRIMARY KEY,
             type TEXT,
             timestamp TEXT,
             query TEXT,
             user_location TEXT,
             result_type TEXT,
-            top_service_ids TEXT, -- Stored as JSON string
-            results_snapshot TEXT -- Stored as JSON string
-        )
+            top_service_ids TEXT,
+            results_snapshot TEXT
+        );
     ''')
 
-    # 3. Actions Table (Clicks/Conversions)
-    conn.execute('''
+    # 3. Actions Table
+    cur.execute('''
         CREATE TABLE IF NOT EXISTS actions (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            session_id INTEGER,
+            id SERIAL PRIMARY KEY,
+            session_id INTEGER REFERENCES sessions(id),
             timestamp TEXT,
             action_type TEXT,
             service_id INTEGER,
-            note TEXT,
-            FOREIGN KEY(session_id) REFERENCES sessions(id)
-        )
+            note TEXT
+        );
     ''')
     
     conn.commit()
+    cur.close()
     conn.close()
 
 # Initialize DB immediately on module load
-init_db()
+try:
+    init_db()
+except Exception as e:
+    print(f"⚠️ DB Init failed (Ignore if building): {e}")
 
-# --- 1. TIME FILTERING LOGIC (robust) ---
+# --- 1. TIME FILTERING LOGIC ---
 def parse_time(t):
     if not t or not isinstance(t, str):
         return None
@@ -109,23 +117,20 @@ def is_shop_open(open_str, close_str, now_dt=None):
     if o < c: return o <= now <= c
     return now >= o or now <= c
 
-# --- 2. LOCATION SCORE (UPDATED FOR REMOTE) ---
+# --- 2. LOCATION SCORE ---
 def calculate_location_score(shop_loc, user_loc):
     if not user_loc or not shop_loc:
         return 0.0
     shop = shop_loc.lower().strip()
     user = user_loc.lower().strip()
 
-    # --- UPGRADE: Remote/Online Support ---
-    # If the service is remote, it is relevant to EVERYONE (High score)
+    # Remote Support
     if shop in ("remote", "online", "virtual", "anywhere"):
-        return 0.9  # Score 0.9 to ensure visibility (just below exact same-hostel match)
+        return 0.9
 
-    # Exact Match (Same Hostel)
     if shop == user:
         return 1.0
     
-    # Adjacency Logic (H-5 near H-6)
     try:
         shop_num = int(''.join(filter(str.isdigit, shop)))
         user_num = int(''.join(filter(str.isdigit, user)))
@@ -166,10 +171,9 @@ def analyze_intent(user_query):
     cleaned = " ".join(user_query.strip().split())
     return analyze_intent_cached(cleaned)
 
-# --- 4. RANKING & MATCHING ---
+# --- 4. DATA FETCHING (PostgreSQL) ---
 def _service_keywords(service):
     kw = []
-    # Handle DB list vs string
     db_kw = service.get("keywords", [])
     if isinstance(db_kw, str):
         try: db_kw = json.loads(db_kw)
@@ -182,20 +186,24 @@ def _service_keywords(service):
     return set(kw)
 
 def get_all_services():
-    """Fetch all services from SQLite and convert to list of dicts."""
+    """Fetch all services from Postgres."""
     conn = get_db_connection()
-    rows = conn.execute('SELECT * FROM services').fetchall()
-    conn.close()
+    cur = conn.cursor()
+    cur.execute('SELECT * FROM services ORDER BY id ASC')
+    rows = cur.fetchall()
     
     services = []
     for row in rows:
-        svc = dict(row)
+        svc = dict(row) # RealDictCursor gives us a dict
         # Parse JSON fields
         try:
             svc['keywords'] = json.loads(svc['keywords']) if svc['keywords'] else []
         except:
             svc['keywords'] = []
         services.append(svc)
+    
+    cur.close()
+    conn.close()
     return services
 
 # Compatibility alias
@@ -253,51 +261,56 @@ def get_all_recommendations(user_query, user_location):
         return {"type": "smart", "results": smart, "message": "Here are the best matches for your request!"}
     else:
         fall = get_fallback_suggestions(user_location)
-        return {"type": "fallback", "results": fall, "message": "No exact matches — showing popular open spots nearby.(Fallback)"}
+        return {"type": "fallback", "results": fall, "message": "No exact matches — showing popular open spots nearby."}
 
-# --- 5. SERVICE MANAGEMENT (CRUD via SQL) ---
+# --- 5. SERVICE MANAGEMENT (CRUD via Postgres) ---
 
 def add_service_entry(entry):
-    """Adds a new service to the DB."""
+    """Adds a new service to Postgres."""
     conn = get_db_connection()
     cur = conn.cursor()
-
-    # Data prep
+    
     incoming_name = (entry.get("name") or "").strip().lower()
     incoming_location = (entry.get("location") or "").strip().lower()
     incoming_whatsapp = (entry.get("whatsapp") or "").strip()
     
-    # 1. Check duplicate WhatsApp
+    # 1. Check duplicate WhatsApp (Using %s for Postgres params)
     if incoming_whatsapp:
-        dup = cur.execute("SELECT id FROM services WHERE whatsapp = ?", (incoming_whatsapp,)).fetchone()
-        if dup:
+        cur.execute("SELECT id FROM services WHERE whatsapp = %s", (incoming_whatsapp,))
+        res = cur.fetchone()
+        if res:
+            cur.close()
             conn.close()
-            raise ValueError(f"Duplicate service detected: same WhatsApp number already exists (id={dup['id']}).")
+            raise ValueError(f"Duplicate service detected: same WhatsApp number already exists (id={res['id']}).")
             
     # 2. Check duplicate Name + Location
-    dup = cur.execute("SELECT id FROM services WHERE LOWER(name) = ? AND LOWER(location) = ?", 
-                      (incoming_name, incoming_location)).fetchone()
-    if dup:
+    cur.execute("SELECT id FROM services WHERE LOWER(name) = %s AND LOWER(location) = %s", 
+                      (incoming_name, incoming_location))
+    res = cur.fetchone()
+    if res:
+        cur.close()
         conn.close()
-        raise ValueError(f"Duplicate service detected: same name exists at this location (id={dup['id']}).")
+        raise ValueError(f"Duplicate service detected: same name exists at this location (id={res['id']}).")
 
-    # Serialize keywords
     kws = entry.get("keywords", [])
     if isinstance(kws, str):
         kws = [k.strip() for k in kws.split(",") if k.strip()]
     kws_json = json.dumps(kws)
 
+    # Postgres uses RETURNING id to get the new ID
     cur.execute('''
         INSERT INTO services (name, category, location, open_time, close_time, description, keywords, whatsapp, form_url)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+        RETURNING id
     ''', (
         entry.get("name"), entry.get("category"), entry.get("location"),
         entry.get("open_time"), entry.get("close_time"), entry.get("description"),
         kws_json, incoming_whatsapp, entry.get("form_url")
     ))
     
-    new_id = cur.lastrowid
+    new_id = cur.fetchone()['id']
     conn.commit()
+    cur.close()
     conn.close()
     
     entry['id'] = new_id
@@ -305,11 +318,14 @@ def add_service_entry(entry):
     return entry
 
 def update_service(service_id, updated_fields):
-    """Updates specific fields of a service in DB."""
+    """Updates specific fields of a service in Postgres."""
     conn = get_db_connection()
+    cur = conn.cursor()
     
     # Check existence
-    if not conn.execute("SELECT id FROM services WHERE id = ?", (service_id,)).fetchone():
+    cur.execute("SELECT id FROM services WHERE id = %s", (service_id,))
+    if not cur.fetchone():
+        cur.close()
         conn.close()
         raise ValueError(f"Service with id={service_id} not found.")
 
@@ -319,33 +335,35 @@ def update_service(service_id, updated_fields):
     for k, v in updated_fields.items():
         if k == 'id': continue
         if k == 'keywords':
-            # Handle keywords specially
             if isinstance(v, str):
                 v = [x.strip() for x in v.split(",") if x.strip()]
-            set_clauses.append("keywords = ?")
+            set_clauses.append("keywords = %s")
             values.append(json.dumps(v))
         else:
-            set_clauses.append(f"{k} = ?")
+            set_clauses.append(f"{k} = %s")
             values.append(v)
             
     values.append(service_id)
-    sql = f"UPDATE services SET {', '.join(set_clauses)} WHERE id = ?"
+    sql = f"UPDATE services SET {', '.join(set_clauses)} WHERE id = %s"
     
-    conn.execute(sql, values)
+    cur.execute(sql, values)
     conn.commit()
+    cur.close()
     conn.close()
     return updated_fields
 
 def delete_service(service_id):
-    """Deletes a service from DB."""
+    """Deletes a service from Postgres."""
     conn = get_db_connection()
-    cur = conn.execute("DELETE FROM services WHERE id = ?", (service_id,))
+    cur = conn.cursor()
+    cur.execute("DELETE FROM services WHERE id = %s", (service_id,))
     conn.commit()
     success = cur.rowcount > 0
+    cur.close()
     conn.close()
     return success
 
-# --- 6. EVENTS & METRICS (SQL Version) ---
+# --- 6. EVENTS & METRICS (Postgres Version) ---
 
 def _now_iso():
     return dt.now().isoformat()
@@ -353,8 +371,8 @@ def _now_iso():
 def record_search(user_query, user_location, result_data):
     """Records session to 'sessions' table."""
     conn = get_db_connection()
+    cur = conn.cursor()
     
-    # Extract IDs
     top_ids = []
     for r in result_data.get("results", []):
         try:
@@ -362,52 +380,61 @@ def record_search(user_query, user_location, result_data):
             if sid is not None: top_ids.append(int(sid))
         except: pass
         
-    cur = conn.execute('''
+    cur.execute('''
         INSERT INTO sessions (type, timestamp, query, user_location, result_type, top_service_ids, results_snapshot)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        VALUES (%s, %s, %s, %s, %s, %s, %s)
+        RETURNING id
     ''', (
         "search_session", _now_iso(), user_query, user_location, result_data.get("type"),
         json.dumps(top_ids), json.dumps(result_data.get("results", []))
     ))
     
-    sid = cur.lastrowid
+    sid = cur.fetchone()['id']
     conn.commit()
+    cur.close()
     conn.close()
     return sid
 
 def record_action(session_id, action_type, service_id=None, note=None):
     """Records action to 'actions' table."""
     conn = get_db_connection()
+    cur = conn.cursor()
     
     # Verify session exists
-    if not conn.execute("SELECT id FROM sessions WHERE id = ?", (session_id,)).fetchone():
+    cur.execute("SELECT id FROM sessions WHERE id = %s", (session_id,))
+    if not cur.fetchone():
+        cur.close()
         conn.close()
         return False
         
-    conn.execute('''
+    cur.execute('''
         INSERT INTO actions (session_id, timestamp, action_type, service_id, note)
-        VALUES (?, ?, ?, ?, ?)
+        VALUES (%s, %s, %s, %s, %s)
     ''', (session_id, _now_iso(), action_type, service_id, note))
     
     conn.commit()
+    cur.close()
     conn.close()
     return True
 
 def get_all_events():
-    """
-    Reconstructs the original nested event structure from SQL relational tables.
-    Returns: List of session dicts, each containing an 'actions' list.
-    """
+    """Reconstructs events from Postgres."""
     conn = get_db_connection()
-    sessions_rows = conn.execute("SELECT * FROM sessions").fetchall()
-    actions_rows = conn.execute("SELECT * FROM actions").fetchall()
+    cur = conn.cursor()
+    
+    cur.execute("SELECT * FROM sessions ORDER BY id DESC") # Newest first usually better for logs
+    sessions_rows = cur.fetchall()
+    
+    cur.execute("SELECT * FROM actions ORDER BY id ASC")
+    actions_rows = cur.fetchall()
+    
+    cur.close()
     conn.close()
 
-    # Convert sessions to dict and index by ID
+    # Map sessions
     sessions_map = {}
     for r in sessions_rows:
         s = dict(r)
-        # Parse JSON fields back
         try: s['top_service_ids'] = json.loads(s['top_service_ids'])
         except: s['top_service_ids'] = []
         try: s['results_snapshot'] = json.loads(s['results_snapshot'])
@@ -416,7 +443,7 @@ def get_all_events():
         s['actions'] = []
         sessions_map[s['id']] = s
 
-    # Attach actions to their sessions
+    # Attach actions
     for r in actions_rows:
         a = dict(r)
         sid = a['session_id']
@@ -428,7 +455,7 @@ def get_all_events():
 # Compatibility alias for metrics functions
 safe_load_events = get_all_events
 
-# --- METRICS CALCULATION (Unchanged logic, now powered by SQL data) ---
+# --- METRICS CALCULATION ---
 
 def _filter_events_timeframe(events, start_iso=None, end_iso=None):
     if not start_iso and not end_iso:
@@ -486,7 +513,7 @@ def compute_location_sensitivity(start_iso=None, end_iso=None):
             svc = services.get(sid)
             svc_loc = (svc.get("location") or "").strip().lower() if svc else None
             score = calculate_location_score(svc_loc, loc)
-            if score >= 1.0:
+            if score >= 0.9: # includes remote/online
                 same += 1
             else:
                 other += 1
