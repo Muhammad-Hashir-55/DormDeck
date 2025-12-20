@@ -548,4 +548,17 @@ if 'last_results' in st.session_state and st.session_state['last_results']:
 
 # Footer
 st.markdown("---")
+# --- FEEDBACK & CONTACT CTA BUTTONS ---
+st.markdown("### 💬 Help Us Improve")
+
+cta_col1, cta_col2 = st.columns(2)
+
+with cta_col1:
+    if st.button("📝 Give Feedback about DormDeck", use_container_width=True):
+        open_link_js("https://forms.gle/H3WjM7BHe1hwBbP3A")
+
+with cta_col2:
+    if st.button("💬 Contact Us for Your Queries", use_container_width=True):
+        open_link_js("https://wa.me/923160151734")
+
 st.caption("🎓 DormDeck AI v2.0 | Smart Campus Concierge | Using Gemini 2.5 Flash AI")
