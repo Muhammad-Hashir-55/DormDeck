@@ -58,7 +58,7 @@ page = params.get("page", ["main"])[0]
 
 # --- Sidebar ---
 with st.sidebar:
-    st.image("https://cdn-icons-png.flaticon.com/512/4712/4712009.png", width=80)
+    st.image("logo_dormdeck.png", width=80)
     st.title("DormDeck")
     st.caption("Campus Concierge v2.0")
     st.markdown("---")
