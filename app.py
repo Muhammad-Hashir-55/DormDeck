@@ -15,7 +15,7 @@ ADMIN_PASS = os.getenv("ADMIN_PASS_DORMDECK")
 # --- 1. PAGE CONFIG & STYLING ---
 st.set_page_config(
     page_title="DormDeck AI",
-    page_icon="🎓",
+    page_icon="logo_dormdeck.png",
     layout="centered",
     initial_sidebar_state="expanded"
 )
@@ -178,7 +178,7 @@ with st.sidebar:
 # --- 3. SESSION STATE ---
 if "messages" not in st.session_state:
     st.session_state.messages = [
-        {"role": "assistant", "content": f"🎓 **Welcome to DormDeck AI!**\n\nI'm your campus concierge. I can find food, stationary, services, medicine, or transport near **{user_location}**.\n\nTry asking for:\n• *'I need spicy wings right now'*\n• *'Printing near H-5'*\n• *'Emergency medicine delivery'*"}
+        {"role": "assistant", "content": f"**Welcome to DormDeck AI!**\n\nI'm your campus concierge. I can find food, stationary, services, medicine, or transport near **{user_location}**.\n\nTry asking for:\n• *'I need spicy wings right now'*\n• *'Printing near H-5'*\n• *'Emergency medicine delivery'*"}
     ]
 
 if "pending_quick_query" not in st.session_state:
@@ -403,7 +403,7 @@ if page == "admin" and st.session_state.get("is_admin"):
     st.stop()  # stop further rendering of main app when on admin page
 
 # --- MAIN APP UI (default) ---
-st.title("🎓 DormDeck AI - Campus Concierge")
+st.title("DormDeck AI - Campus Concierge")
 st.markdown("### ⚡ Quick Actions")
 
 quick_actions = [
@@ -561,4 +561,4 @@ with cta_col2:
     if st.button("💬 Contact Us for Your Queries", use_container_width=True):
         open_link_js("https://wa.me/923160151734")
 
-st.caption("🎓 DormDeck AI v2.0 | Smart Campus Concierge | Using Gemini 2.5 Flash AI")
+st.caption("DormDeck AI v2.0 | Smart Campus Concierge | Using Gemini 2.5 Flash AI")
